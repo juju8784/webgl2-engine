@@ -1,8 +1,12 @@
 #version 300 es
 // an attribute is an input (in) to a vertex shader.
 // It will receive data from a buffer
+
+// using vec2 since we're only working in 2d
 in vec2 a_position;
 
+// a uniform is a global variable that is the same
+// using this to set the resolution of the canvas
 uniform vec2 u_resolution;
 
 // all shaders have a main function
