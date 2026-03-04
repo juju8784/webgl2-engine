@@ -120,70 +120,72 @@ function randomInt(range: number) {
 
 function main() {
 //setting up shaders and buffers, only if ctx is not null
-    if (ctx) {
-        var vertexShader = createShader(ctx, ctx.VERTEX_SHADER, vertexShaderSource) as WebGLShader;
-        var fragmentShader = createShader(ctx, ctx.FRAGMENT_SHADER, fragmentShaderSource) as WebGLShader;
+    if (!ctx) {
+        console.log("WebGL not supported");
+        return;
+    }
+    var vertexShader = createShader(ctx, ctx.VERTEX_SHADER, vertexShaderSource) as WebGLShader;
+    var fragmentShader = createShader(ctx, ctx.FRAGMENT_SHADER, fragmentShaderSource) as WebGLShader;
 
-        var program = createProgram(ctx, vertexShader, fragmentShader) as WebGLProgram;
+    var program = createProgram(ctx, vertexShader, fragmentShader) as WebGLProgram;
 
 
-        // using a_position because that's the name of the attribute in our vertex shader
-        var positionAttributeLocation = ctx.getAttribLocation(program, "a_position");
+    // using a_position because that's the name of the attribute in our vertex shader
+    var positionAttributeLocation = ctx.getAttribLocation(program, "a_position");
 
-        // look up uniform locations
-        var resolutionUniformLocation = ctx.getUniformLocation(program, "u_resolution");
-        var colorUniformLocation = ctx.getUniformLocation(program, "u_color");
+    // look up uniform locations
+    var resolutionUniformLocation = ctx.getUniformLocation(program, "u_resolution");
+    var colorUniformLocation = ctx.getUniformLocation(program, "u_color");
 
-        //Buffer
-        var positionBuffer = ctx.createBuffer();
+    //Buffer
+    var positionBuffer = ctx.createBuffer();
 
-        // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
-        ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
-        
-        
-        var vao = ctx.createVertexArray();
-        // bind to vao so that we affect its settings
-        ctx.bindVertexArray(vao);
+    // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
+    ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
+    
+    
+    var vao = ctx.createVertexArray();
+    // bind to vao so that we affect its settings
+    ctx.bindVertexArray(vao);
 
-        // Turn on the attribute
-        ctx.enableVertexAttribArray(positionAttributeLocation);
-        // Settings
-        var size = 2;          // 2 components per iteration it will take the x and y from the array and default for the z and w
-        var type = ctx.FLOAT;  // the data is 32bit floats
-        var normalize = false; // don't normalize the data
-        var stride = 0;         // 0 = move forward size * sizeof(type) each iteration to get the next position
-        var offset = 0;         // start at the beginning of the buffer
-        ctx.vertexAttribPointer(positionAttributeLocation, size, type, normalize, stride, offset);
-        
-        // draw
-        // Resize the canvas to match the size it's displayed.
-        resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);
+    // Turn on the attribute
+    ctx.enableVertexAttribArray(positionAttributeLocation);
+    // Settings
+    var size = 2;          // 2 components per iteration it will take the x and y from the array and default for the z and w
+    var type = ctx.FLOAT;  // the data is 32bit floats
+    var normalize = false; // don't normalize the data
+    var stride = 0;         // 0 = move forward size * sizeof(type) each iteration to get the next position
+    var offset = 0;         // start at the beginning of the buffer
+    ctx.vertexAttribPointer(positionAttributeLocation, size, type, normalize, stride, offset);
+    
+    // draw
+    // Resize the canvas to match the size it's displayed.
+    resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);
 
-        // Tell WebGL how to convert from clip space to pixels
-        ctx.viewport(0, 0, ctx!.canvas.width, ctx!.canvas.height);
+    // Tell WebGL how to convert from clip space to pixels
+    ctx.viewport(0, 0, ctx!.canvas.width, ctx!.canvas.height);
 
-        ctx.clearColor(0, 0, 0, 0);
-        ctx.clear(ctx.COLOR_BUFFER_BIT);
+    ctx.clearColor(0, 0, 0, 0);
+    ctx.clear(ctx.COLOR_BUFFER_BIT);
 
-        ctx.useProgram(program);
-        
-        // can only do this after using the program
-        ctx.bindVertexArray(vao);
-        ctx.uniform2f(resolutionUniformLocation, ctx.canvas.width, ctx.canvas.height);
-        
-        // draw 50 random rectangles in random colors
-        for (var ii = 0; ii < 50; ii++) {
-            // Set a random rectangle position.
-            setRectangle(ctx, randomInt(300), randomInt(300), randomInt(300), randomInt(300));
-            // Set a random color.
-            ctx.uniform4f(colorUniformLocation, Math.random(), Math.random(), Math.random(), 1);
+    ctx.useProgram(program);
+    
+    // can only do this after using the program
+    ctx.bindVertexArray(vao);
+    ctx.uniform2f(resolutionUniformLocation, ctx.canvas.width, ctx.canvas.height);
+    
+    // draw 50 random rectangles in random colors
+    for (var ii = 0; ii < 50; ii++) {
+        // Set a random rectangle position.
+        setRectangle(ctx, randomInt(300), randomInt(300), randomInt(300), randomInt(300));
+        // Set a random color.
+        ctx.uniform4f(colorUniformLocation, Math.random(), Math.random(), Math.random(), 1);
 
-            // Draw the rectangle.
-            var primitiveType = ctx.TRIANGLES;
-            var offset = 0;
-            var count = 6;
-            ctx.drawArrays(primitiveType, offset, count);
-        }
+        // Draw the rectangle.
+        var primitiveType = ctx.TRIANGLES;
+        var offset = 0;
+        var count = 6;
+        ctx.drawArrays(primitiveType, offset, count);
     }
 }
 
