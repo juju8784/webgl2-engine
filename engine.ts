@@ -170,8 +170,8 @@ function main() {
         // can only do this after using the program
         ctx.bindVertexArray(vao);
         ctx.uniform2f(resolutionUniformLocation, ctx.canvas.width, ctx.canvas.height);
-        ctx.uniform4f(colorUniformLocation, Math.random(), Math.random(), Math.random(), 1);
         
+        // draw 50 random rectangles in random colors
         for (var ii = 0; ii < 50; ii++) {
             // Set a random rectangle position.
             setRectangle(ctx, randomInt(300), randomInt(300), randomInt(300), randomInt(300));
@@ -184,26 +184,6 @@ function main() {
             var count = 6;
             ctx.drawArrays(primitiveType, offset, count);
         }
-
-        // var positions = [
-        //     10, 20,
-        //     80, 20,
-        //     10, 30,
-        //     10, 30,
-        //     80, 20,
-        //     80, 30,
-        // ];
-        // //this is using the position buffer that we just bound to the array buffer
-        // ctx.bufferData(ctx.ARRAY_BUFFER, new Float32Array(positions), ctx.STATIC_DRAW);
-
-
-
-
-
-        // var primitiveType = ctx.TRIANGLES;
-        // var offset = 0;
-        // var count = 6;
-        // ctx.drawArrays(primitiveType, offset, count);
     }
 }
 
