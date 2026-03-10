@@ -57,26 +57,30 @@ function createShader(gl: WebGL2RenderingContext, type: number, source: string) 
     gl.compileShader(shader);
     var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
     
-    if (success)
+    if (!success)
     {
-        return shader;
+        throw ("could not compile shader:" + gl.getShaderInfoLog(shader));
     }
+    return shader;
 }
 
 
 // creates a program from 2 shaders
 function createProgram(gl: WebGL2RenderingContext, vertexShader: WebGLShader, fragmentShader: WebGLShader) {
     var program = gl.createProgram() as WebGLProgram;
+
+    // attach shaders
     gl.attachShader(program, vertexShader);
     gl.attachShader(program, fragmentShader);
+
+    // link the program
     gl.linkProgram(program);
+
     var success = gl.getProgramParameter(program, gl.LINK_STATUS);
     if (success) {
-        return program;
+        throw ("program failed to link:" + gl.getProgramInfoLog(program));
     }
-
-    console.log(gl.getProgramInfoLog(program));
-    gl.deleteProgram(program);
+    return program;
 
 }
 
