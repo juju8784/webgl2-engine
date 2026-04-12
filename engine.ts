@@ -77,7 +77,7 @@ function createProgram(gl: WebGL2RenderingContext, vertexShader: WebGLShader, fr
     gl.linkProgram(program);
 
     var success = gl.getProgramParameter(program, gl.LINK_STATUS);
-    if (success) {
+    if (!success) {
         throw ("program failed to link:" + gl.getProgramInfoLog(program));
     }
     return program;
