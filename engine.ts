@@ -1,5 +1,9 @@
 import * as webGLUtils from './resources/webgl-utils.js';
 
+
+// declare const glMatrix: {mat4: typeof import("gl-matrix")["mat4"]};
+// const { mat4 } = glMatrix;
+
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('webgl2');
 //gonna try webgl2 for the first time, wish me luck
@@ -136,6 +140,11 @@ function main() {
     
     // Rebind the buffer before updating it in the loop
     ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
+
+    //testing out the mat4 library
+    // var matrix = mat4.create();
+    // mat4.translate(matrix, matrix, [100, 50, 0]);
+    // console.log("Matrix:", matrix);
     
     // draw 50 random rectangles in random colors
     for (var ii = 0; ii < 50; ii++) {
