@@ -1,6 +1,7 @@
 {
   "devDependencies": {
-    "typescript": "^5.9.3"
+    "typescript": "^5.9.3",
+    "vite": "^8.0.8"
   },
   "dependencies": {
     "gl-matrix": "^3.4.4"
