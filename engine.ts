@@ -1,4 +1,4 @@
-
+import * as webGLUtils from './resources/webgl-utils.js';
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const ctx = canvas.getContext('webgl2');
@@ -49,56 +49,6 @@ void main() {
 }
 `;
 
-
-// creates and compiles a shader
-function createShader(gl: WebGL2RenderingContext, type: number, source: string) {
-    var shader = gl.createShader(type) as WebGLShader;
-    gl.shaderSource(shader, source);
-    gl.compileShader(shader);
-    var success = gl.getShaderParameter(shader, gl.COMPILE_STATUS);
-    
-    if (!success)
-    {
-        throw ("could not compile shader:" + gl.getShaderInfoLog(shader));
-    }
-    return shader;
-}
-
-
-// creates a program from 2 shaders
-function createProgram(gl: WebGL2RenderingContext, vertexShader: WebGLShader, fragmentShader: WebGLShader) {
-    var program = gl.createProgram() as WebGLProgram;
-
-    // attach shaders
-    gl.attachShader(program, vertexShader);
-    gl.attachShader(program, fragmentShader);
-
-    // link the program
-    gl.linkProgram(program);
-
-    var success = gl.getProgramParameter(program, gl.LINK_STATUS);
-    if (!success) {
-        throw ("program failed to link:" + gl.getProgramInfoLog(program));
-    }
-    return program;
-
-}
-
-
-//helper function
-function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
-    const displayWidth  = canvas.clientWidth;
-    const displayHeight = canvas.clientHeight;
-    const needResize =  canvas.width  !== displayWidth ||
-                        canvas.height !== displayHeight;
-
-    if (needResize) {
-        canvas.width  = displayWidth;
-        canvas.height = displayHeight;
-    }
-    return needResize;
-}
-
 //helper function to set rectangle vertices
 function setRectangle(gl: WebGL2RenderingContext, x: number, y: number, width: number, height: number)
 {
@@ -128,10 +78,16 @@ function main() {
         console.log("WebGL not supported");
         return;
     }
-    var vertexShader = createShader(ctx, ctx.VERTEX_SHADER, vertexShaderSource) as WebGLShader;
-    var fragmentShader = createShader(ctx, ctx.FRAGMENT_SHADER, fragmentShaderSource) as WebGLShader;
+    console.log("WebGL context created");
+    
+    var vertexShader = webGLUtils.compileShader(ctx, ctx.VERTEX_SHADER, vertexShaderSource) as WebGLShader;
+    console.log("Vertex shader compiled");
+    
+    var fragmentShader = webGLUtils.compileShader(ctx, ctx.FRAGMENT_SHADER, fragmentShaderSource) as WebGLShader;
+    console.log("Fragment shader compiled");
 
-    var program = createProgram(ctx, vertexShader, fragmentShader) as WebGLProgram;
+
+    var program = webGLUtils.createProgram(ctx, vertexShader, fragmentShader) as WebGLProgram;
 
 
     // using a_position because that's the name of the attribute in our vertex shader
@@ -164,7 +120,9 @@ function main() {
     
     // draw
     // Resize the canvas to match the size it's displayed.
-    resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);
+    webGLUtils.resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);
+    console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
+    console.log("Canvas client size:", canvas.clientWidth, "x", canvas.clientHeight);
 
     // Tell WebGL how to convert from clip space to pixels
     ctx.viewport(0, 0, ctx!.canvas.width, ctx!.canvas.height);
@@ -177,6 +135,9 @@ function main() {
     // can only do this after using the program
     ctx.bindVertexArray(vao);
     ctx.uniform2f(resolutionUniformLocation, ctx.canvas.width, ctx.canvas.height);
+    
+    // Rebind the buffer before updating it in the loop
+    ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
     
     // draw 50 random rectangles in random colors
     for (var ii = 0; ii < 50; ii++) {
