@@ -1,4 +1,5 @@
 import * as webGLUtils from './resources/webgl-utils.js';
+import { mat4 } from 'gl-matrix';
 
 
 // declare const glMatrix: {mat4: typeof import("gl-matrix")["mat4"]};
@@ -142,9 +143,9 @@ function main() {
     ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
 
     //testing out the mat4 library
-    // var matrix = mat4.create();
-    // mat4.translate(matrix, matrix, [100, 50, 0]);
-    // console.log("Matrix:", matrix);
+    var matrix = mat4.create();
+    mat4.translate(matrix, matrix, [100, 50, 0]);
+    console.log("Matrix:", matrix);
     
     // draw 50 random rectangles in random colors
     for (var ii = 0; ii < 50; ii++) {
