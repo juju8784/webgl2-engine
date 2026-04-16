@@ -36,6 +36,13 @@ export function createProgram(gl: WebGL2RenderingContext, vertexShader: WebGLSha
 
 }
 
+// Combining common steps to create a program from shader sources
+export function createProgramFromSources(gl: WebGL2RenderingContext, shaderSources: {vertex: string, fragment: string}) {
+    var vertexShader = compileShader(gl, gl.VERTEX_SHADER, shaderSources.vertex);
+    var fragmentShader = compileShader(gl, gl.FRAGMENT_SHADER, shaderSources.fragment);
+    return createProgram(gl, vertexShader, fragmentShader);
+}
+
 
 //resizes the canvas to match the size it's displayed
 //May need to handle the zoom level of the browser in the future, but for now this is sufficient

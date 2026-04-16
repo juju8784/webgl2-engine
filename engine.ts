@@ -78,16 +78,14 @@ function main() {
         console.log("WebGL not supported");
         return;
     }
-    console.log("WebGL context created");
-    
-    var vertexShader = webGLUtils.compileShader(ctx, ctx.VERTEX_SHADER, vertexShaderSource) as WebGLShader;
-    console.log("Vertex shader compiled");
-    
-    var fragmentShader = webGLUtils.compileShader(ctx, ctx.FRAGMENT_SHADER, fragmentShaderSource) as WebGLShader;
-    console.log("Fragment shader compiled");
 
+    
+    var shaderSources = {
+        vertex: vertexShaderSource,
+        fragment: fragmentShaderSource
+    };
 
-    var program = webGLUtils.createProgram(ctx, vertexShader, fragmentShader) as WebGLProgram;
+    var program = webGLUtils.createProgramFromSources(ctx, shaderSources) as WebGLProgram;
 
 
     // using a_position because that's the name of the attribute in our vertex shader
