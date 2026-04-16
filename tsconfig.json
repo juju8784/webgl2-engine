@@ -42,5 +42,5 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
   },
-  "include": ["engine.ts", "math2d.ts", "math3d.ts"]
+  "include": ["engine.ts"]
 }
