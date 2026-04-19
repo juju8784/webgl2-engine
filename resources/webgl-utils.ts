@@ -58,3 +58,56 @@ export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
     }
     return needResize;
 }
+
+class RenderObject {
+    //the necessary
+    ctx: WebGL2RenderingContext;
+    program: WebGLProgram;
+
+
+    vertexArray: WebGLVertexArrayObject;
+    positionBuffer: WebGLBuffer;
+    uniforms: WebGLActiveInfo[] = [];
+    //positionbuffer create?
+
+    //settings
+    size: number;
+    type: number;
+    normalize: boolean;
+    primitiveType: number;
+    offset: number;
+    count: number;
+
+    constructor(ctx:WebGL2RenderingContext, program: WebGLProgram)
+    {
+        this.ctx = ctx;
+        this.program = program;
+    }
+
+    //get all active uniforms in the current program
+    setUniformInfo()
+    {
+        var numUniforms = this.ctx.getProgramParameter(this.program, this.ctx.ACTIVE_UNIFORMS);
+        for (let i = 0; i < numUniforms; ++i)
+        {
+            const info = this.ctx.getActiveUniform(this.program, i) as WebGLActiveInfo;
+            this.uniforms.push(info);
+        }
+    }
+
+    //run draw logic for this object
+    draw()
+    {
+        this.ctx.useProgram(this.program);
+        this.ctx.bindVertexArray(this.vertexArray);
+        
+        //uniform logic
+
+        this.ctx.bindBuffer(this.ctx.ARRAY_BUFFER, this.positionBuffer);
+        //set vertex data
+
+
+        this.ctx.drawArrays(this.primitiveType, this.offset, this.count);
+    }
+
+}

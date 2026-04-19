@@ -77,6 +77,21 @@ function randomInt(range: number) {
     return Math.floor(Math.random() * range);
 }
 
+//draw calls
+function draw()
+{
+    ctx?.clear(ctx.COLOR_BUFFER_BIT);
+    ctx?.useProgram(program);
+    ctx?.bindVertexArray(vao);
+    ctx?.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+    ctx?.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
+
+    ctx?.drawArrays(ctx.TRIANGLES, 0, 6);
+
+}
+
+
+
 function main() {
 //setting up shaders and buffers, only if ctx is not null
     if (!ctx) {
@@ -123,18 +138,17 @@ function main() {
     
     console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
     console.log("Canvas client size:", canvas.clientWidth, "x", canvas.clientHeight);
-    // draw
-    // Resize the canvas to match the size it's displayed.
-    webGLUtils.resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);
-    console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
-    console.log("Canvas client size:", canvas.clientWidth * devicePixelRatio, "x", canvas.clientHeight * devicePixelRatio);
-
+    
+    webGLUtils.resizeCanvasToDisplaySize(canvas);
+    //console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
+    //console.log("Canvas client size:", canvas.clientWidth * devicePixelRatio, "x", canvas.clientHeight * devicePixelRatio);
+    
     // Tell WebGL how to convert from clip space to pixels
-    ctx.viewport(0, 0, ctx!.canvas.width, ctx!.canvas.height);
-
+    ctx.viewport(0, 0, ctx.canvas.width, ctx.canvas.height);
+    
     ctx.clearColor(0, 0, 0, 0);
     ctx.clear(ctx.COLOR_BUFFER_BIT);
-
+    
     ctx.useProgram(program);
     
     // can only do this after using the program
@@ -143,11 +157,6 @@ function main() {
     
     // Rebind the buffer before updating it in the loop
     ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
-
-    //testing out the mat4 library
-    var matrix = mat4.create();
-    mat4.translate(matrix, matrix, [100, 50, 0]);
-    console.log("Matrix:", matrix);
     
     // draw 50 random rectangles in random colors
     for (var ii = 0; ii < 50; ii++) {
@@ -155,13 +164,23 @@ function main() {
         setRectangle(ctx, randomInt(300), randomInt(300), randomInt(300), randomInt(300));
         // Set a random color.
         ctx.uniform4f(colorUniformLocation, Math.random(), Math.random(), Math.random(), 1);
-
+        
         // Draw the rectangle.
         var primitiveType = ctx.TRIANGLES;
         var offset = 0;
         var count = 6;
         ctx.drawArrays(primitiveType, offset, count);
     }
+    // Resize the canvas to match the size it's displayed.
+    const observer = new ResizeObserver(() => {
+        webGLUtils.resizeCanvasToDisplaySize(canvas);
+        ctx.viewport(0, 0, canvas.width, canvas.height);
+        ctx.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+        //draw call
+        draw();
+    })
+    
+    observer.observe(canvas);
 }
 
 main();
