@@ -3,13 +3,13 @@
   "compilerOptions": {
     // File Layout
     // "rootDir": "./src",
-    "outDir": "./build",
+    // "outDir": "./build",
 
     // Environment Settings
     // See also https://aka.ms/tsconfig/module
     "module": "esnext",
     "moduleResolution": "bundler",
-    "target": "es2020",
+    "target": "es2023",
     "types": [],
     // For nodejs:
     "lib": ["DOM", "ES2020"],
@@ -42,5 +42,5 @@
     "moduleDetection": "force",
     "skipLibCheck": true,
   },
-  "include": ["engine.ts"]
+  "include": ["engine.ts", "resources/webgl-utils.ts"],
 }

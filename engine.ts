@@ -121,6 +121,8 @@ function main() {
     var offset = 0;         // start at the beginning of the buffer
     ctx.vertexAttribPointer(positionAttributeLocation, size, type, normalize, stride, offset);
     
+    console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
+    console.log("Canvas client size:", canvas.clientWidth, "x", canvas.clientHeight);
     // draw
     // Resize the canvas to match the size it's displayed.
     webGLUtils.resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);

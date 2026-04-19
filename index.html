@@ -1,8 +1,4 @@
 <!DOCTYPE html>
-<!--[if lt IE 7]>      <html class="no-js lt-ie9 lt-ie8 lt-ie7"> <![endif]-->
-<!--[if IE 7]>         <html class="no-js lt-ie9 lt-ie8"> <![endif]-->
-<!--[if IE 8]>         <html class="no-js lt-ie9"> <![endif]-->
-<!--[if gt IE 8]>      <html class="no-js"> <![endif]-->
 <html>
     <head>
         <meta charset="utf-8">
@@ -11,12 +7,14 @@
         <meta name="description" content="">
         <meta name="viewport" content="width=device-width, initial-scale=1">
         <link rel="stylesheet" href="main.css">
+        <link rel="icon" href="data:;base64,iVBORw0KGgo=">
+        <script type="module" src="resources/webgl-utils.ts"></script>
+        <script type="module" src="engine.ts"></script>
     </head>
     <body>
         <div>
             <canvas id="c" style="border: 1px solid #000000;"></canvas>
         </div>
-        <script type="module" src="build/resources/webgl-utils.js" async defer></script>
-        <script type="module" src="build/engine.js" async defer></script>
+        
     </body>
 </html>
