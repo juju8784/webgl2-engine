@@ -47,8 +47,8 @@ export function createProgramFromSources(gl: WebGL2RenderingContext, shaderSourc
 //resizes the canvas to match the size it's displayed
 //May need to handle the zoom level of the browser in the future, but for now this is sufficient
 export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
-    const displayWidth  = canvas.clientWidth;
-    const displayHeight = canvas.clientHeight;
+    const displayWidth  = canvas.clientWidth * window.devicePixelRatio;
+    const displayHeight = canvas.clientHeight * window.devicePixelRatio;
     const needResize =  canvas.width  !== displayWidth ||
                         canvas.height !== displayHeight;
 

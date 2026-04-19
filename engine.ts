@@ -127,7 +127,7 @@ function main() {
     // Resize the canvas to match the size it's displayed.
     webGLUtils.resizeCanvasToDisplaySize(ctx.canvas as HTMLCanvasElement);
     console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
-    console.log("Canvas client size:", canvas.clientWidth, "x", canvas.clientHeight);
+    console.log("Canvas client size:", canvas.clientWidth * devicePixelRatio, "x", canvas.clientHeight * devicePixelRatio);
 
     // Tell WebGL how to convert from clip space to pixels
     ctx.viewport(0, 0, ctx!.canvas.width, ctx!.canvas.height);
