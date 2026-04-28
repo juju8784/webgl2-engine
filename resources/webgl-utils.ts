@@ -1,4 +1,5 @@
-
+import * as twgl from "twgl.js";
+import { mat4 } from "gl-matrix";
 
 // creates and compiles a shader
 export function compileShader(gl: WebGL2RenderingContext, type: number, source: string) {
@@ -59,49 +60,73 @@ export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement) {
     return needResize;
 }
 
-class RenderObject {
+export class RenderObject {
     //the necessary
     ctx: WebGL2RenderingContext;
     program: WebGLProgram;
 
+    programInfo: twgl.ProgramInfo;
 
+    //buffers and vertex arrays
     vertexArray: WebGLVertexArrayObject;
     positionBuffer: WebGLBuffer;
-    uniforms: WebGLActiveInfo[] = [];
-    //positionbuffer create?
+    bufferInfo: twgl.BufferInfo;
+
 
     //settings
     size: number;
-    type: number;
-    normalize: boolean;
-    primitiveType: number;
-    offset: number;
+    type: number = WebGL2RenderingContext.FLOAT;
+    normalize: boolean = false;
+    primitiveType: number = WebGL2RenderingContext.TRIANGLES;
+    stride: number = 0;
+    offset: number = 0;
     count: number;
 
-    constructor(ctx:WebGL2RenderingContext, program: WebGLProgram)
+    constructor(ctx:WebGL2RenderingContext, vertexShaderSource: string, fragmentShaderSource: string)
     {
         this.ctx = ctx;
-        this.program = program;
+
+        this.programInfo = twgl.createProgramInfo(this.ctx, [vertexShaderSource, fragmentShaderSource]);
+        this.program = this.programInfo.program;
+
+        twgl.createBufferFromArray
+
+        this.vertexArray = this.ctx.createVertexArray() as WebGLVertexArrayObject;
+        this.positionBuffer = this.ctx.createBuffer() as WebGLBuffer;
+        //this.setUniformInfo();
     }
 
-    //get all active uniforms in the current program
-    setUniformInfo()
+    // //get all active uniforms in the current program
+    // setUniformInfo()
+    // {
+    //     var numUniforms = this.ctx.getProgramParameter(this.program, this.ctx.ACTIVE_UNIFORMS);
+    //     for (let i = 0; i < numUniforms; ++i)
+    //     {
+    //         const info = this.ctx.getActiveUniform(this.program, i) as WebGLActiveInfo;
+    //         this.uniforms.push(info);
+    //     }
+    // }
+
+    setUniformData(uniformObject: Record<string, any>[])
     {
-        var numUniforms = this.ctx.getProgramParameter(this.program, this.ctx.ACTIVE_UNIFORMS);
-        for (let i = 0; i < numUniforms; ++i)
-        {
-            const info = this.ctx.getActiveUniform(this.program, i) as WebGLActiveInfo;
-            this.uniforms.push(info);
-        }
+        twgl.setUniforms(this.programInfo, uniformObject);
     }
 
     //run draw logic for this object
-    draw()
+    draw(uniformObject: Record<string, any>[], attributeObject: Record<string, any>[])
     {
         this.ctx.useProgram(this.program);
+        this.ctx.bindBuffer(this.ctx.ARRAY_BUFFER, this.positionBuffer);
         this.ctx.bindVertexArray(this.vertexArray);
-        
+
+        //attribute logic
+        this.ctx.enableVertexAttribArray(this.programInfo.attribLocations.a_position as number);
+        this.ctx.vertexAttribPointer(this.programInfo.attribLocations.a_position as number, this.size, this.type, this.normalize, this.stride, this.offset);
+
         //uniform logic
+        
+
+
 
         this.ctx.bindBuffer(this.ctx.ARRAY_BUFFER, this.positionBuffer);
         //set vertex data

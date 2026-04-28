@@ -1,5 +1,4 @@
 import * as webGLUtils from './resources/webgl-utils.js';
-import { mat4 } from 'gl-matrix';
 
 
 // declare const glMatrix: {mat4: typeof import("gl-matrix")["mat4"]};
@@ -15,6 +14,7 @@ var vertexShaderSource = `#version 300 es
 
 // using vec2 since we're only working in 2d
 in vec2 a_position;
+in vec4 a_color;
 
 // a uniform is a global variable that is the same
 // using this to set the resolution of the canvas
@@ -80,13 +80,13 @@ function randomInt(range: number) {
 //draw calls
 function draw()
 {
-    ctx?.clear(ctx.COLOR_BUFFER_BIT);
-    ctx?.useProgram(program);
-    ctx?.bindVertexArray(vao);
-    ctx?.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-    ctx?.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
+    // ctx?.clear(ctx.COLOR_BUFFER_BIT);
+    // ctx?.useProgram(program);
+    // ctx?.bindVertexArray(vao);
+    // ctx?.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
+    // ctx?.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
 
-    ctx?.drawArrays(ctx.TRIANGLES, 0, 6);
+    // ctx?.drawArrays(ctx.TRIANGLES, 0, 6);
 
 }
 
@@ -171,13 +171,16 @@ function main() {
         var count = 6;
         ctx.drawArrays(primitiveType, offset, count);
     }
+    var testObject = new webGLUtils.RenderObject(ctx, vertexShaderSource, fragmentShaderSource);
+    console.log(testObject);
+    
     // Resize the canvas to match the size it's displayed.
     const observer = new ResizeObserver(() => {
         webGLUtils.resizeCanvasToDisplaySize(canvas);
         ctx.viewport(0, 0, canvas.width, canvas.height);
         ctx.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
         //draw call
-        draw();
+        //draw();
     })
     
     observer.observe(canvas);
