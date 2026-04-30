@@ -1,6 +1,7 @@
 import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils"; 
 import { RenderLoop } from "./resources/renderloop";
 import * as twgl from "twgl.js";
+import { InputManager } from "./resources/input-manager";
 
 // declare const glMatrix: {mat4: typeof import("gl-matrix")["mat4"]};
 // const { mat4 } = glMatrix;
@@ -119,7 +120,25 @@ function main() {
         objects.push(obj);
         loop.add(obj);
     }
-    
+
+    //input handling
+    const input = new InputManager(canvas);
+    loop.attachInput(input);
+
+    loop.onInput = (input, time) => {
+        if (input.isKeyPressed("KeyR"))
+        {
+            for (const obj of objects)
+            {
+                obj.setAttributeData("a_position", {
+                    data: setRectangle(gl, randomInt(canvas.width - 300), randomInt(canvas.height - 300), randomInt(300), randomInt(300)),
+                    size: 2,
+                });
+                obj.uploadBuffers();
+            }
+            return true; //request redraw
+        }
+    }
     loop.start();
 
     loop.requestRedraw();

@@ -1,4 +1,5 @@
 import { RenderObject, resizeCanvasToDisplaySize } from "./webgl-utils";
+import { InputManager, type InputState } from "./input-manager";
 
 /**
  * Demand-driven WebGL2 render loop.
@@ -69,11 +70,35 @@ export class RenderLoop {
      */
     onAfterFrame:  ((gl: WebGL2RenderingContext, canvas: HTMLCanvasElement, time: number) => void) | null = null;
 
+    /**
+     * Called every frame (draw or idle) after input has been polled.
+     * Use this to read input state and update uniforms, move objects, etc.
+     * Returning true from this callback forces a redraw even if no RenderObject
+     * was mutated — useful for continuous animations driven by held keys.
+     *
+     * @param input  Snapshot of the current input state for this frame.
+     * @param time   DOMHighResTimeStamp from requestAnimationFrame.
+     */
+    onInput: ((input: InputState, time: number) => boolean | void) | null = null;
+
+    private input: InputManager | null = null;
+
     // ── Constructor ────────────────────────────────────────────────────────
 
     constructor(gl: WebGL2RenderingContext, canvas: HTMLCanvasElement) {
         this.gl     = gl;
         this.canvas = canvas;
+    }
+
+    /**
+     * Attach an InputManager to this loop.
+     * Any input event (key, mouse) will automatically call requestRedraw().
+     * The polled InputState is passed to onInput each frame.
+     */
+    attachInput(input: InputManager): this {
+        this.input = input;
+        input.onActivity = () => this.requestRedraw();
+        return this;
     }
 
     // ── Object management ──────────────────────────────────────────────────
@@ -144,6 +169,8 @@ export class RenderLoop {
             obj.onDirty = null;
         }
         this.objects.clear();
+        this.input?.destroy();
+        this.input = null;
     }
 
     // ── Internal ───────────────────────────────────────────────────────────
@@ -155,16 +182,23 @@ export class RenderLoop {
     private frame(time: number): void {
         if (!this.running) return;
 
+        // Poll input and call onInput every frame (even idle ones), so held
+        // keys and continuous animations are never skipped.
+        if (this.input && this.onInput) {
+            const state = this.input.poll();
+            const wantsRedraw = this.onInput(state, time);
+            if (wantsRedraw) this.needsDraw = true;
+        }
+
         // Always resize the canvas if needed, even on idle frames,
         // so we don't miss a window resize.
         const resized = resizeCanvasToDisplaySize(this.canvas);
         if (resized) {
-            // A resize means we must redraw even if nothing else changed.
             this.needsDraw = true;
         }
 
         if (this.needsDraw) {
-            this.needsDraw = false; // clear before drawing so mutations during draw re-trigger
+            this.needsDraw = false;
 
             this.onBeforeFrame?.(this.gl, this.canvas, time);
 
@@ -175,7 +209,6 @@ export class RenderLoop {
             this.onAfterFrame?.(this.gl, this.canvas, time);
         }
 
-        // Always schedule the next frame to keep the loop alive.
         this.scheduleFrame();
     }
 }

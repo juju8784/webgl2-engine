@@ -137,13 +137,21 @@ export class RenderObject {
     /** Byte offset into index buffer (default: 0). */
     private drawOffset: number = 0;
 
-    /** Whether buffers need re-uploading before the next draw. */
-    private dirty: boolean = false;
+    /**
+     * True when attribute buffers have changed and uploadBuffers() is needed.
+     * Distinct from renderDirty so uniform-only changes never trigger the warning.
+     */
+    private buffersDirty: boolean = false;
 
     /**
-     * Optional callback invoked whenever this object becomes dirty.
+     * True when anything has changed and a redraw is needed.
+     * Set by both attribute and uniform changes.
+     */
+    private renderDirty: boolean = false;
+
+    /**
+     * Optional callback invoked whenever this object needs a redraw.
      * RenderLoop sets this automatically when you call loop.add(obj).
-     * You can also set it manually if you manage your own loop.
      */
     onDirty: (() => void) | null = null;
 
@@ -176,13 +184,23 @@ export class RenderObject {
     }
 
     /**
-     * Mark this object as needing a redraw and notify the render loop (if any).
-     * Called automatically by all mutation methods; you can also call it manually
-     * to force a redraw without changing any data (e.g. after a uniform-only update
-     * where you want the loop to wake up).
+     * Mark that attribute buffers need re-uploading AND that a redraw is needed.
+     * Called automatically by setAttributeData / removeAttribute.
+     */
+    markBuffersDirty(): this {
+        this.buffersDirty = true;
+        this.renderDirty  = true;
+        this.onDirty?.();
+        return this;
+    }
+
+    /**
+     * Mark that a redraw is needed without flagging buffers as dirty.
+     * Called automatically by setUniform / setCount / setPrimitiveType etc.
+     * Can also be called manually to force a redraw with no data change.
      */
     markDirty(): this {
-        this.dirty = true;
+        this.renderDirty = true;
         this.onDirty?.();
         return this;
     }
@@ -208,7 +226,7 @@ export class RenderObject {
             this.attributes.set(name, { desc, buffer, dirty: true });
         }
 
-        return this.markDirty();
+        return this.markBuffersDirty();
     }
 
     /** Remove an attribute (frees its GPU buffer). */
@@ -217,7 +235,7 @@ export class RenderObject {
         if (entry) {
             this.ctx.deleteBuffer(entry.buffer);
             this.attributes.delete(name);
-            return this.markDirty();
+            return this.markBuffersDirty();
         }
         return this;
     }
@@ -303,9 +321,7 @@ export class RenderObject {
         gl.bindVertexArray(null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
 
-        // Buffers are now clean; dirty was already set by setAttributeData,
-        // so we clear it here rather than via markDirty.
-        this.dirty = false;
+        this.buffersDirty = false;
         return this;
     }
 
@@ -318,7 +334,7 @@ export class RenderObject {
      *                          Useful for per-frame values like u_time or u_modelMatrix.
      */
     draw(uniformOverrides?: Record<string, any>): void {
-        if (this.dirty) {
+        if (this.buffersDirty) {
             console.warn(
                 "RenderObject.draw() called with un-uploaded buffer changes. " +
                 "Call uploadBuffers() first."
