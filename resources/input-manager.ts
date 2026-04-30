@@ -112,6 +112,14 @@ export class InputManager {
     private _scrollDeltaY = 0;
 
     /**
+     * Cached result of canvas.getBoundingClientRect().
+     * Calling getBoundingClientRect() on every mousemove forces a layout reflow,
+     * which is expensive at high mouse speeds. We cache it and only refresh
+     * when a resize or scroll invalidates the canvas's position.
+     */
+    private _cachedRect: DOMRect;
+
+    /**
      * Called whenever any input event fires.
      * RenderLoop.attachInput() sets this to () => loop.requestRedraw()
      * so that any input automatically wakes the loop.
@@ -126,6 +134,7 @@ export class InputManager {
 
     constructor(canvas: HTMLCanvasElement) {
         this.canvas = canvas;
+        this._cachedRect = canvas.getBoundingClientRect();
         this.register();
     }
 
@@ -229,7 +238,9 @@ export class InputManager {
         // ── Mouse (on canvas) ──────────────────────────────────────────────
 
         this.on(this.canvas, "mousemove", (e) => {
-            const rect = this.canvas.getBoundingClientRect();
+            // Use the cached rect instead of calling getBoundingClientRect() every
+            // event — the live call forces a layout reflow on each mouse move.
+            const rect = this._cachedRect;
             const dpr  = window.devicePixelRatio;
             this._mouseX = (e.clientX - rect.left) * dpr;
             this._mouseY = (e.clientY - rect.top)  * dpr;
@@ -260,5 +271,26 @@ export class InputManager {
         this.on(this.canvas, "contextmenu", (e) => {
             e.preventDefault();
         });
+
+        // ── Rect cache invalidation ────────────────────────────────────────
+        // Refresh the cached bounding rect when the canvas's position may have
+        // changed. ResizeObserver covers canvas size changes; scroll covers
+        // cases where the page scrolls and shifts the canvas's client position.
+
+        const refreshRect = () => {
+            this._cachedRect = this.canvas.getBoundingClientRect();
+        };
+
+        const ro = new ResizeObserver(refreshRect);
+        ro.observe(this.canvas);
+        // Store a synthetic listener entry so destroy() can disconnect it.
+        this.listeners.push([
+            { removeEventListener: () => ro.disconnect() } as unknown as EventTarget,
+            "resize",
+            refreshRect as EventListenerOrEventListenerObject,
+        ]);
+
+        // Re-cache on window scroll (canvas may have shifted in the viewport).
+        this.on(window, "scroll", refreshRect as any);
     }
 }

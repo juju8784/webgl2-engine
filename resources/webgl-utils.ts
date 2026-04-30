@@ -75,6 +75,8 @@ export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement): boolean {
  * @param normalize  Whether to normalise integer data (default: false).
  * @param stride     Byte stride between vertices (default: 0 = tightly packed).
  * @param offset     Byte offset of first element (default: 0).
+ * @param dynamic    If true, uses gl.DYNAMIC_DRAW — better for data updated frequently at runtime.
+ *                   If false (default), uses gl.STATIC_DRAW — better for geometry set once.
  */
 export interface AttributeDescriptor {
     data:      Float32Array | Int32Array | Uint16Array | Uint8Array;
@@ -83,6 +85,7 @@ export interface AttributeDescriptor {
     normalize?: boolean; // defaults to false
     stride?:   number;   // defaults to 0
     offset?:   number;   // defaults to 0
+    dynamic?:  boolean;  // defaults to false (STATIC_DRAW)
 }
 
 // ─── RenderObject ────────────────────────────────────────────────────────────
@@ -96,7 +99,7 @@ export interface AttributeDescriptor {
  *   obj.setAttributeData('a_normal',   { data: normals,   size: 3 });
  *   obj.setUniform('u_color', [1, 0, 0, 1]);
  *   obj.setCount(vertexCount);
- *   obj.uploadBuffers();   // send data to GPU
+ *   obj.uploadBuffers();   // send data to GPU (or let draw() handle it automatically)
  *   // ... in render loop:
  *   obj.draw();
  *   // or with per-frame override:
@@ -158,6 +161,19 @@ export class RenderObject {
     /** False when the program was passed in (shared) — destroy() won't delete it. */
     private ownsProgram: boolean;
 
+    /**
+     * When false, draw() is a no-op and the object is skipped entirely.
+     * Toggle this to show/hide an object without removing it from the loop.
+     */
+    visible: boolean = true;
+
+    /**
+     * Tracks the last program bound per GL context to avoid redundant
+     * gl.useProgram calls when many objects share the same program.
+     */
+    private static _lastProgram: WeakMap<WebGL2RenderingContext, WebGLProgram | null>
+        = new WeakMap();
+
     // ── Constructor ────────────────────────────────────────────────────────
 
     /**
@@ -209,10 +225,11 @@ export class RenderObject {
 
     /**
      * Register or update a vertex attribute.
-     * Does NOT upload to the GPU — call uploadBuffers() for that.
+     * Does NOT upload to the GPU — call uploadBuffers() for that,
+     * or simply let draw() handle it automatically.
      *
      * @param name  Must match the attribute name in the vertex shader (e.g. 'a_position').
-     * @param desc  Attribute descriptor (data, size, optional type/normalize/stride/offset).
+     * @param desc  Attribute descriptor (data, size, optional type/normalize/stride/offset/dynamic).
      */
     setAttributeData(name: string, desc: AttributeDescriptor): this {
         const existing = this.attributes.get(name);
@@ -288,7 +305,8 @@ export class RenderObject {
 
     /**
      * Upload all dirty attribute buffers to the GPU and re-bind the VAO.
-     * Call this once after setting geometry, and again any time data changes.
+     * Called automatically by draw() when buffers are dirty, but you can also
+     * call it explicitly to pre-upload before the first frame.
      */
     uploadBuffers(): this {
         const gl = this.ctx;
@@ -309,9 +327,12 @@ export class RenderObject {
             const normalize = desc.normalize ?? false;
             const stride    = desc.stride    ?? 0;
             const offset    = desc.offset    ?? 0;
+            // Use DYNAMIC_DRAW for data updated frequently at runtime,
+            // STATIC_DRAW (default) for geometry set once.
+            const usage     = desc.dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW;
 
             gl.bindBuffer(gl.ARRAY_BUFFER, buffer);
-            gl.bufferData(gl.ARRAY_BUFFER, desc.data, gl.STATIC_DRAW);
+            gl.bufferData(gl.ARRAY_BUFFER, desc.data, usage);
             gl.enableVertexAttribArray(loc);
             gl.vertexAttribPointer(loc, desc.size, type, normalize, stride, offset);
 
@@ -329,29 +350,38 @@ export class RenderObject {
 
     /**
      * Execute a draw call using the object's stored state.
+     * Automatically uploads any dirty buffers before drawing.
      *
      * @param uniformOverrides  Optional per-draw uniforms; merged on top of stored defaults.
      *                          Useful for per-frame values like u_time or u_modelMatrix.
      */
     draw(uniformOverrides?: Record<string, any>): void {
-        if (this.buffersDirty) {
-            console.warn(
-                "RenderObject.draw() called with un-uploaded buffer changes. " +
-                "Call uploadBuffers() first."
-            );
-        }
+        // Skip invisible objects entirely — no GL calls at all.
+        if (!this.visible) return;
 
         if (this.count === 0) {
             console.warn("RenderObject.draw() called with count = 0. Nothing drawn.");
             return;
         }
 
+        // Auto-upload dirty buffers so callers don't need to call uploadBuffers() manually.
+        if (this.buffersDirty) {
+            this.uploadBuffers();
+        }
+
         const gl = this.ctx;
 
-        gl.useProgram(this.program);
+        // Avoid redundant gl.useProgram calls — one of the most expensive WebGL
+        // state changes — when many objects share the same program.
+        const last = RenderObject._lastProgram.get(gl);
+        if (last !== this.program) {
+            gl.useProgram(this.program);
+            RenderObject._lastProgram.set(gl, this.program);
+        }
+
         gl.bindVertexArray(this.vao);
 
-        // Merge stored uniforms with any per-draw overrides
+        // Merge stored uniforms with any per-draw overrides.
         const resolvedUniforms = uniformOverrides
             ? { ...this.uniforms, ...uniformOverrides }
             : this.uniforms;
@@ -360,7 +390,9 @@ export class RenderObject {
 
         gl.drawArrays(this.primitiveType, this.drawOffset, this.count);
 
-        gl.bindVertexArray(null);
+        // NOTE: Intentionally NOT calling gl.bindVertexArray(null) after each draw.
+        // Unbinding is unnecessary overhead — the next draw() immediately rebinds
+        // its own VAO, so the stale binding is never observed.
     }
 
     // ── Cleanup ────────────────────────────────────────────────────────────
@@ -376,6 +408,11 @@ export class RenderObject {
         }
         this.attributes.clear();
         gl.deleteVertexArray(this.vao);
+        // Clear the cached program binding if it points to this object's program,
+        // so the next object doesn't incorrectly skip a gl.useProgram call.
+        if (RenderObject._lastProgram.get(gl) === this.program) {
+            RenderObject._lastProgram.set(gl, null);
+        }
         // Only delete the program if this object compiled it — shared programs
         // must be deleted by whoever created them (e.g. twgl.createProgramInfo).
         if (this.ownsProgram) {
