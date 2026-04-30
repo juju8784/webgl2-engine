@@ -1,5 +1,6 @@
 import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils"; 
 import { RenderLoop } from "./resources/renderloop";
+import * as twgl from "twgl.js";
 
 // declare const glMatrix: {mat4: typeof import("gl-matrix")["mat4"]};
 // const { mat4 } = glMatrix;
@@ -102,9 +103,11 @@ function main() {
 
     }
 
+    const sharedProgram = twgl.createProgramInfo(gl, [vertexShaderSource, fragmentShaderSource]);
+
     for (let i = 0; i < 100; i++)
     {
-        let obj = new RenderObject(gl, vertexShaderSource, fragmentShaderSource);
+        let obj = new RenderObject(gl, sharedProgram);
         obj.setAttributeData("a_position", {
             data: setRectangle(gl, randomInt(canvas.width - 300), randomInt(canvas.height - 300), randomInt(300), randomInt(300)),
             size: 2,

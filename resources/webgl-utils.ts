@@ -147,18 +147,32 @@ export class RenderObject {
      */
     onDirty: (() => void) | null = null;
 
+    /** False when the program was passed in (shared) — destroy() won't delete it. */
+    private ownsProgram: boolean;
+
     // ── Constructor ────────────────────────────────────────────────────────
 
+    /**
+     * @param ctx     WebGL2 context.
+     * @param program Either a pre-built twgl.ProgramInfo (shared across objects)
+     *                or an object with vertex/fragment shader source strings
+     *                (a new program will be compiled for this object alone).
+     *
+     * Sharing a ProgramInfo across many objects with the same shaders is the
+     * primary way to reduce RAM and GPU memory usage.
+     */
     constructor(
         ctx: WebGL2RenderingContext,
-        vertexShaderSource: string,
-        fragmentShaderSource: string
+        program: twgl.ProgramInfo | { vertex: string; fragment: string }
     ) {
-        this.ctx         = ctx;
-        this.programInfo = twgl.createProgramInfo(ctx, [vertexShaderSource, fragmentShaderSource]);
-        this.program     = this.programInfo.program;
+        this.ctx = ctx;
+        this.ownsProgram = !("program" in program);
+        this.programInfo = this.ownsProgram
+            ? twgl.createProgramInfo(ctx, [(program as {vertex:string;fragment:string}).vertex, (program as {vertex:string;fragment:string}).fragment])
+            : (program as twgl.ProgramInfo);
+        this.program       = this.programInfo.program;
         this.primitiveType = ctx.TRIANGLES;
-        this.vao         = ctx.createVertexArray() as WebGLVertexArrayObject;
+        this.vao           = ctx.createVertexArray() as WebGLVertexArrayObject;
     }
 
     /**
@@ -346,6 +360,10 @@ export class RenderObject {
         }
         this.attributes.clear();
         gl.deleteVertexArray(this.vao);
-        gl.deleteProgram(this.program);
+        // Only delete the program if this object compiled it — shared programs
+        // must be deleted by whoever created them (e.g. twgl.createProgramInfo).
+        if (this.ownsProgram) {
+            gl.deleteProgram(this.program);
+        }
     }
 }
