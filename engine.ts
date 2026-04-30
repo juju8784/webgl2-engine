@@ -1,11 +1,11 @@
-import * as webGLUtils from './resources/webgl-utils.js';
-
+import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils"; 
+import { RenderLoop } from "./resources/renderloop";
 
 // declare const glMatrix: {mat4: typeof import("gl-matrix")["mat4"]};
 // const { mat4 } = glMatrix;
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
-const ctx = canvas.getContext('webgl2');
+const gl = canvas.getContext('webgl2');
 //gonna try webgl2 for the first time, wish me luck
 
 var vertexShaderSource = `#version 300 es
@@ -62,128 +62,64 @@ function setRectangle(gl: WebGL2RenderingContext, x: number, y: number, width: n
     var y1 = y;
     var y2 = y + height;
 
-    //this will bind to the current buffer so make sure you have the right one bound
-    gl.bufferData(gl.ARRAY_BUFFER, new Float32Array([
+    return new Float32Array([
         x1, y1,
         x2, y1,
         x1, y2,
         x1, y2,
         x2, y1,
         x2, y2,
-    ]), gl.STATIC_DRAW);
+    ]);
 }
 
 function randomInt(range: number) {
     return Math.floor(Math.random() * range);
 }
 
-//draw calls
-function draw()
-{
-    // ctx?.clear(ctx.COLOR_BUFFER_BIT);
-    // ctx?.useProgram(program);
-    // ctx?.bindVertexArray(vao);
-    // ctx?.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-    // ctx?.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
-
-    // ctx?.drawArrays(ctx.TRIANGLES, 0, 6);
-
-}
-
-
+const objects: RenderObject[] = [];
 
 function main() {
 //setting up shaders and buffers, only if ctx is not null
-    if (!ctx) {
+    if (!gl) {
         console.log("WebGL not supported");
         return;
     }
 
-    
-    var shaderSources = {
-        vertex: vertexShaderSource,
-        fragment: fragmentShaderSource
-    };
+    resizeCanvasToDisplaySize(canvas);
 
-    var program = webGLUtils.createProgramFromSources(ctx, shaderSources) as WebGLProgram;
+    //create render loop
+    const loop = new RenderLoop(gl, canvas);
 
+    loop.onBeforeFrame = (gl, canvas) => {
+        gl.viewport(0, 0, canvas.width, canvas.height);
+        gl.clearColor(0, 0, 0, 1);
+        gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
+        const res: [number, number] = [gl.canvas.width, gl.canvas.height];
+        for (const obj of objects)
+        {
+            obj.setUniform("u_resolution", res);
+        }
 
-    // using a_position because that's the name of the attribute in our vertex shader
-    var positionAttributeLocation = ctx.getAttribLocation(program, "a_position");
-
-    // look up uniform locations
-    var resolutionUniformLocation = ctx.getUniformLocation(program, "u_resolution");
-    var colorUniformLocation = ctx.getUniformLocation(program, "u_color");
-
-    //Buffer
-    var positionBuffer = ctx.createBuffer();
-
-    // Bind it to ARRAY_BUFFER (think of it as ARRAY_BUFFER = positionBuffer)
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
-    
-    
-    var vao = ctx.createVertexArray();
-    // bind to vao so that we affect its settings
-    ctx.bindVertexArray(vao);
-
-    // Turn on the attribute
-    ctx.enableVertexAttribArray(positionAttributeLocation);
-    // Settings
-    var size = 2;          // 2 components per iteration it will take the x and y from the array and default for the z and w
-    var type = ctx.FLOAT;  // the data is 32bit floats
-    var normalize = false; // don't normalize the data
-    var stride = 0;         // 0 = move forward size * sizeof(type) each iteration to get the next position
-    var offset = 0;         // start at the beginning of the buffer
-    ctx.vertexAttribPointer(positionAttributeLocation, size, type, normalize, stride, offset);
-    
-    console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
-    console.log("Canvas client size:", canvas.clientWidth, "x", canvas.clientHeight);
-    
-    webGLUtils.resizeCanvasToDisplaySize(canvas);
-    //console.log("Canvas size:", ctx.canvas.width, "x", ctx.canvas.height);
-    //console.log("Canvas client size:", canvas.clientWidth * devicePixelRatio, "x", canvas.clientHeight * devicePixelRatio);
-    
-    // Tell WebGL how to convert from clip space to pixels
-    ctx.viewport(0, 0, ctx.canvas.width, ctx.canvas.height);
-    
-    ctx.clearColor(0, 0, 0, 0);
-    ctx.clear(ctx.COLOR_BUFFER_BIT);
-    
-    ctx.useProgram(program);
-    
-    // can only do this after using the program
-    ctx.bindVertexArray(vao);
-    ctx.uniform2f(resolutionUniformLocation, ctx.canvas.width, ctx.canvas.height);
-    
-    // Rebind the buffer before updating it in the loop
-    ctx.bindBuffer(ctx.ARRAY_BUFFER, positionBuffer);
-    
-    // draw 50 random rectangles in random colors
-    for (var ii = 0; ii < 50; ii++) {
-        // Set a random rectangle position.
-        setRectangle(ctx, randomInt(300), randomInt(300), randomInt(300), randomInt(300));
-        // Set a random color.
-        ctx.uniform4f(colorUniformLocation, Math.random(), Math.random(), Math.random(), 1);
-        
-        // Draw the rectangle.
-        var primitiveType = ctx.TRIANGLES;
-        var offset = 0;
-        var count = 6;
-        ctx.drawArrays(primitiveType, offset, count);
     }
-    var testObject = new webGLUtils.RenderObject(ctx, vertexShaderSource, fragmentShaderSource);
-    console.log(testObject);
+
+    for (let i = 0; i < 100; i++)
+    {
+        let obj = new RenderObject(gl, vertexShaderSource, fragmentShaderSource);
+        obj.setAttributeData("a_position", {
+            data: setRectangle(gl, randomInt(canvas.width - 300), randomInt(canvas.height - 300), randomInt(300), randomInt(300)),
+            size: 2,
+        });
+        obj.setUniform("u_resolution", [gl.canvas.width, gl.canvas.height]);
+        obj.setUniform("u_color", [Math.random(), Math.random(), Math.random(), 1]);
+        obj.setCount(6);
+        obj.uploadBuffers();
+        objects.push(obj);
+        loop.add(obj);
+    }
     
-    // Resize the canvas to match the size it's displayed.
-    const observer = new ResizeObserver(() => {
-        webGLUtils.resizeCanvasToDisplaySize(canvas);
-        ctx.viewport(0, 0, canvas.width, canvas.height);
-        ctx.uniform2f(resolutionUniformLocation, canvas.width, canvas.height);
-        //draw call
-        //draw();
-    })
-    
-    observer.observe(canvas);
+    loop.start();
+
+    loop.requestRedraw();
 }
 
 main();
