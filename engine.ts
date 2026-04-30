@@ -2,6 +2,8 @@ import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils
 import { RenderLoop } from "./resources/renderloop";
 import * as twgl from "twgl.js";
 import { InputManager } from "./resources/input-manager";
+import { mat4 } from "gl-matrix";
+import { parseGLB } from "./resources/glb-parser";
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const gl = canvas.getContext('webgl2');
@@ -32,6 +34,38 @@ void main() {
 }
 `;
 
+var vertexShader3D = `#version 300 es
+in vec4 a_position;
+in vec4 a_color;
+
+uniform mat4 u_matrix;
+
+out vec4 v_color;
+
+void main() {
+    // Multiply the position by the matrix.
+    gl_Position = u_matrix * a_position;
+
+    // Pass the color to the fragment shader.
+    v_color = a_color;
+}
+`
+
+var fragShader3D = `#version 300 es
+    precision highp float;
+
+    // Passed in from the vertex shader.
+    in vec4 v_color;
+
+    uniform vec4 u_colorMult;
+
+    out vec4 outColor;
+
+    void main() {
+    outColor = v_color * u_colorMult;
+    }
+`;
+
 function setRectangle(gl: WebGL2RenderingContext, x: number, y: number, width: number, height: number) {
     var x1 = x;
     var x2 = x + width;
@@ -52,6 +86,15 @@ function randomInt(range: number) {
     return Math.floor(Math.random() * range);
 }
 
+function computeMatrix(viewProjectionMatrix: mat4, translation: number[], xRotation: number, yRotation: number)
+{
+    var matrix = mat4.create();
+    mat4.translate(matrix, viewProjectionMatrix, translation);
+    mat4.rotateX(matrix, matrix, xRotation);
+    mat4.rotateY(matrix, matrix, yRotation);
+    return matrix;
+}
+
 const objects: RenderObject[] = [];
 
 function main() {
@@ -59,8 +102,33 @@ function main() {
         console.log("WebGL not supported");
         return;
     }
-
+    
     resizeCanvasToDisplaySize(canvas);
+
+    //Computing matrices
+    gl.enable(gl.CULL_FACE);
+    gl.enable(gl.DEPTH_TEST);
+
+    // projection matrix
+    var aspect = canvas.clientWidth / canvas.clientHeight;
+    var projectionMatrix = mat4.create();
+    mat4.perspectiveNO(projectionMatrix, 100, aspect, -1, 1);
+
+    // camera matrix
+    var cameraPosition = [0,0,100];
+    var target = [0,0,0];
+    var up = [0,1,0];
+    var cameraMatrix = mat4.create();
+    mat4.targetTo(cameraMatrix, cameraPosition, target, up);
+
+    // view matrix
+    var viewMatrix = mat4.create();
+    mat4.invert(viewMatrix, cameraMatrix);
+
+    var viewProjectionMatrix = mat4.create();
+    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+
+
 
     const loop = new RenderLoop(gl, canvas);
 
@@ -92,6 +160,7 @@ function main() {
         }
     };
 
+    //share a program between common objects with the same rules
     const sharedProgram = twgl.createProgramInfo(gl, [vertexShaderSource, fragmentShaderSource]);
 
     for (let i = 0; i < 100; i++) {
@@ -108,6 +177,11 @@ function main() {
         objects.push(obj);
         loop.add(obj);
     }
+
+    //3d time
+
+    
+
 
     const input = new InputManager(canvas);
     loop.attachInput(input);
