@@ -124,6 +124,19 @@ export class RenderObject {
         dirty:  boolean;
     }> = new Map();
 
+    /**
+     * Optional index buffer. When present, draw() issues drawElements with
+     * `count` indices of `type` starting at `drawOffset` bytes.
+     * When null, draw() issues drawArrays.
+     */
+    private indices: {
+        data:    Uint8Array | Uint16Array | Uint32Array;
+        type:    number;     // gl.UNSIGNED_BYTE / UNSIGNED_SHORT / UNSIGNED_INT
+        buffer:  WebGLBuffer;
+        dirty:   boolean;
+        dynamic: boolean;
+    } | null = null;
+
     // ── Uniform storage ────────────────────────────────────────────────────
 
     /** Stored defaults; merged with per-draw overrides at draw time. */
@@ -257,6 +270,66 @@ export class RenderObject {
         return this;
     }
 
+    // ── Index API ──────────────────────────────────────────────────────────
+
+    /**
+     * Provide an index buffer so draw() uses drawElements instead of drawArrays.
+     *
+     * The GL component type is inferred from the typed-array constructor:
+     *   Uint8Array  → UNSIGNED_BYTE
+     *   Uint16Array → UNSIGNED_SHORT
+     *   Uint32Array → UNSIGNED_INT  (always available in WebGL2)
+     *
+     * Automatically sets count = data.length so a typical GLB primitive doesn't
+     * need a manual setCount(). Override afterwards if you want a partial draw.
+     *
+     * @param data    Index data. Must be one of the three unsigned integer typed arrays.
+     * @param dynamic If true, uses gl.DYNAMIC_DRAW (frequent updates).
+     *                Default false → gl.STATIC_DRAW (set once).
+     */
+    setIndices(
+        data: Uint8Array | Uint16Array | Uint32Array,
+        dynamic: boolean = false,
+    ): this {
+        const gl = this.ctx;
+
+        let type: number;
+        if      (data instanceof Uint8Array)  type = gl.UNSIGNED_BYTE;
+        else if (data instanceof Uint16Array) type = gl.UNSIGNED_SHORT;
+        else if (data instanceof Uint32Array) type = gl.UNSIGNED_INT;
+        else throw new Error("RenderObject.setIndices: data must be Uint8Array, Uint16Array, or Uint32Array.");
+
+        if (this.indices) {
+            this.indices.data    = data;
+            this.indices.type    = type;
+            this.indices.dynamic = dynamic;
+            this.indices.dirty   = true;
+        } else {
+            const buffer = gl.createBuffer();
+            if (!buffer) throw new Error("RenderObject.setIndices: failed to create GL buffer.");
+            this.indices = { data, type, buffer, dirty: true, dynamic };
+        }
+
+        // Sensible default — caller can override with setCount() afterwards
+        // for partial draws (e.g. drawing one sub-range of a shared index buffer).
+        this.count = data.length;
+
+        return this.markBuffersDirty();
+    }
+
+    /**
+     * Drop the index buffer (frees its GPU buffer) and return to drawArrays mode.
+     * Does NOT reset count — call setCount() yourself if needed.
+     */
+    removeIndices(): this {
+        if (this.indices) {
+            this.ctx.deleteBuffer(this.indices.buffer);
+            this.indices = null;
+            return this.markBuffersDirty();
+        }
+        return this;
+    }
+
     // ── Uniform API ────────────────────────────────────────────────────────
 
     /**
@@ -295,7 +368,11 @@ export class RenderObject {
         return this.markDirty();
     }
 
-    /** Byte offset into the first attribute buffer for drawArrays. */
+    /**
+     * Where to start drawing.
+     *  - drawArrays mode (no indices): index of the first vertex (a count, not bytes).
+     *  - drawElements mode (with indices): byte offset into the index buffer.
+     */
     setDrawOffset(offset: number): this {
         this.drawOffset = offset;
         return this.markDirty();
@@ -339,8 +416,21 @@ export class RenderObject {
             entry.dirty = false;
         }
 
+        // Index buffer must be bound while the VAO is active — the
+        // ELEMENT_ARRAY_BUFFER binding is stored as part of VAO state, so this
+        // sticks to the VAO and is restored automatically on the next bind.
+        if (this.indices && this.indices.dirty) {
+            const usage = this.indices.dynamic ? gl.DYNAMIC_DRAW : gl.STATIC_DRAW;
+            gl.bindBuffer(gl.ELEMENT_ARRAY_BUFFER, this.indices.buffer);
+            gl.bufferData(gl.ELEMENT_ARRAY_BUFFER, this.indices.data, usage);
+            this.indices.dirty = false;
+        }
+
         gl.bindVertexArray(null);
         gl.bindBuffer(gl.ARRAY_BUFFER, null);
+        // NOTE: Intentionally not unbinding ELEMENT_ARRAY_BUFFER — that binding
+        // lives inside the VAO we just unbound, and unbinding it now would
+        // affect the (now-active) default VAO instead, which is harmless to leave.
 
         this.buffersDirty = false;
         return this;
@@ -388,7 +478,13 @@ export class RenderObject {
 
         twgl.setUniforms(this.programInfo, resolvedUniforms);
 
-        gl.drawArrays(this.primitiveType, this.drawOffset, this.count);
+        if (this.indices) {
+            // drawOffset is interpreted as a BYTE offset into the index buffer here.
+            gl.drawElements(this.primitiveType, this.count, this.indices.type, this.drawOffset);
+        } else {
+            // drawOffset is the index of the first vertex (a count, not bytes).
+            gl.drawArrays(this.primitiveType, this.drawOffset, this.count);
+        }
 
         // NOTE: Intentionally NOT calling gl.bindVertexArray(null) after each draw.
         // Unbinding is unnecessary overhead — the next draw() immediately rebinds
@@ -407,6 +503,10 @@ export class RenderObject {
             gl.deleteBuffer(entry.buffer);
         }
         this.attributes.clear();
+        if (this.indices) {
+            gl.deleteBuffer(this.indices.buffer);
+            this.indices = null;
+        }
         gl.deleteVertexArray(this.vao);
         // Clear the cached program binding if it points to this object's program,
         // so the next object doesn't incorrectly skip a gl.useProgram call.

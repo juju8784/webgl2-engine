@@ -3,7 +3,7 @@ import { RenderLoop } from "./resources/renderloop";
 import * as twgl from "twgl.js";
 import { InputManager } from "./resources/input-manager";
 import { mat4 } from "gl-matrix";
-import { parseGLB, type GLBPrimitive } from "./resources/glb-parser";
+import { parseGLB } from "./resources/glb-parser";
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const gl = canvas.getContext('webgl2');
@@ -97,55 +97,6 @@ function computeMatrix(viewProjectionMatrix: mat4, translation: number[], xRotat
     return matrix;
 }
 
-/**
- * Expand an indexed GLB primitive into flat per-vertex arrays for drawArrays.
- * RenderObject doesn't support index buffers yet; the next engine feature
- * (drawElements + ELEMENT_ARRAY_BUFFER) will let us drop this copy entirely.
- */
-function expandIndexed(prim: GLBPrimitive): {
-    positions: Float32Array;
-    normals?:  Float32Array;
-    count:     number;
-} {
-    if (!prim.indices) {
-        const out: { positions: Float32Array; normals?: Float32Array; count: number } = {
-            positions: prim.positions,
-            count:     prim.vertexCount,
-        };
-        if (prim.normals) out.normals = prim.normals;
-        return out;
-    }
-
-    const idx     = prim.indices;
-    const srcPos  = prim.positions;
-    const positions = new Float32Array(idx.length * 3);
-    for (let i = 0; i < idx.length; i++) {
-        const v = idx[i]! * 3;
-        positions[i * 3 + 0] = srcPos[v + 0]!;
-        positions[i * 3 + 1] = srcPos[v + 1]!;
-        positions[i * 3 + 2] = srcPos[v + 2]!;
-    }
-
-    let normals: Float32Array | undefined;
-    if (prim.normals) {
-        const srcN = prim.normals;
-        normals = new Float32Array(idx.length * 3);
-        for (let i = 0; i < idx.length; i++) {
-            const v = idx[i]! * 3;
-            normals[i * 3 + 0] = srcN[v + 0]!;
-            normals[i * 3 + 1] = srcN[v + 1]!;
-            normals[i * 3 + 2] = srcN[v + 2]!;
-        }
-    }
-
-    const out: { positions: Float32Array; normals?: Float32Array; count: number } = {
-        positions,
-        count: idx.length,
-    };
-    if (normals) out.normals = normals;
-    return out;
-}
-
 const objects: RenderObject[] = [];
 
 async function main() {
@@ -174,16 +125,19 @@ async function main() {
     const model = await parseGLB("models/sphere.glb");
     const prim  = model.meshes[0]?.primitives[0];
     if (!prim) throw new Error("sphere.glb has no mesh primitives.");
-    const geo = expandIndexed(prim);
 
     const sharedProgram3D = twgl.createProgramInfo(gl, [vertexShader3D, fragShader3D]);
     const sphere = new RenderObject(gl, sharedProgram3D);
-    sphere.setAttributeData("a_position", { data: geo.positions, size: 3 });
-    if (geo.normals) {
-        sphere.setAttributeData("a_normal", { data: geo.normals, size: 3 });
+    sphere.setAttributeData("a_position", { data: prim.positions, size: 3 });
+    if (prim.normals) {
+        sphere.setAttributeData("a_normal", { data: prim.normals, size: 3 });
     }
     sphere.setUniform("u_colorMult", [1, 1, 1, 1]);
-    sphere.setCount(geo.count);
+    if (prim.indices) {
+        sphere.setIndices(prim.indices);  // also sets count = indices.length
+    } else {
+        sphere.setCount(prim.vertexCount);
+    }
     sphere.uploadBuffers();
     objects.push(sphere);
 
