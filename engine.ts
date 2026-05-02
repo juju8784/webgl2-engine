@@ -122,7 +122,7 @@ async function main() {
     mat4.invert(viewMatrix, cameraMatrix);
 
     // ── Load and prepare the sphere ──────────────────────────────────────
-    const model = await parseGLB("models/sphere.glb");
+    const model = await parseGLB("models/sphererough.glb");
     const prim  = model.meshes[0]?.primitives[0];
     if (!prim) throw new Error("sphere.glb has no mesh primitives.");
 
