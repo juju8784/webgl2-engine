@@ -1,9 +1,9 @@
-import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils"; 
+import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils";
 import { RenderLoop } from "./resources/renderloop";
 import * as twgl from "twgl.js";
 import { InputManager } from "./resources/input-manager";
 import { mat4 } from "gl-matrix";
-import { parseGLB } from "./resources/glb-parser";
+import { parseGLB, type GLBPrimitive } from "./resources/glb-parser";
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const gl = canvas.getContext('webgl2');
@@ -35,34 +35,36 @@ void main() {
 `;
 
 var vertexShader3D = `#version 300 es
-in vec4 a_position;
-in vec4 a_color;
+in vec3 a_position;
+in vec3 a_normal;
 
 uniform mat4 u_matrix;
 
-out vec4 v_color;
+out vec3 v_normal;
 
 void main() {
-    // Multiply the position by the matrix.
-    gl_Position = u_matrix * a_position;
+    gl_Position = u_matrix * vec4(a_position, 1.0);
 
-    // Pass the color to the fragment shader.
-    v_color = a_color;
+    // Pass the normal through; the frag shader visualizes it as color.
+    v_normal = a_normal;
 }
 `
 
 var fragShader3D = `#version 300 es
     precision highp float;
 
-    // Passed in from the vertex shader.
-    in vec4 v_color;
+    in vec3 v_normal;
 
     uniform vec4 u_colorMult;
 
     out vec4 outColor;
 
     void main() {
-    outColor = v_color * u_colorMult;
+        // Remap normal from [-1, 1] to [0, 1] so it can be used as RGB.
+        // Classic "show me the normals" debug view — and a quick visual
+        // sanity check that POSITION + NORMAL parsed out of the GLB correctly.
+        vec3 n = normalize(v_normal) * 0.5 + 0.5;
+        outColor = vec4(n, 1.0) * u_colorMult;
     }
 `;
 
@@ -95,50 +97,111 @@ function computeMatrix(viewProjectionMatrix: mat4, translation: number[], xRotat
     return matrix;
 }
 
+/**
+ * Expand an indexed GLB primitive into flat per-vertex arrays for drawArrays.
+ * RenderObject doesn't support index buffers yet; the next engine feature
+ * (drawElements + ELEMENT_ARRAY_BUFFER) will let us drop this copy entirely.
+ */
+function expandIndexed(prim: GLBPrimitive): {
+    positions: Float32Array;
+    normals?:  Float32Array;
+    count:     number;
+} {
+    if (!prim.indices) {
+        const out: { positions: Float32Array; normals?: Float32Array; count: number } = {
+            positions: prim.positions,
+            count:     prim.vertexCount,
+        };
+        if (prim.normals) out.normals = prim.normals;
+        return out;
+    }
+
+    const idx     = prim.indices;
+    const srcPos  = prim.positions;
+    const positions = new Float32Array(idx.length * 3);
+    for (let i = 0; i < idx.length; i++) {
+        const v = idx[i]! * 3;
+        positions[i * 3 + 0] = srcPos[v + 0]!;
+        positions[i * 3 + 1] = srcPos[v + 1]!;
+        positions[i * 3 + 2] = srcPos[v + 2]!;
+    }
+
+    let normals: Float32Array | undefined;
+    if (prim.normals) {
+        const srcN = prim.normals;
+        normals = new Float32Array(idx.length * 3);
+        for (let i = 0; i < idx.length; i++) {
+            const v = idx[i]! * 3;
+            normals[i * 3 + 0] = srcN[v + 0]!;
+            normals[i * 3 + 1] = srcN[v + 1]!;
+            normals[i * 3 + 2] = srcN[v + 2]!;
+        }
+    }
+
+    const out: { positions: Float32Array; normals?: Float32Array; count: number } = {
+        positions,
+        count: idx.length,
+    };
+    if (normals) out.normals = normals;
+    return out;
+}
+
 const objects: RenderObject[] = [];
 
-function main() {
+async function main() {
     if (!gl) {
         console.log("WebGL not supported");
         return;
     }
-    
+
     resizeCanvasToDisplaySize(canvas);
 
-    //Computing matrices
     gl.enable(gl.CULL_FACE);
     gl.enable(gl.DEPTH_TEST);
 
-    // projection matrix
-    var aspect = canvas.clientWidth / canvas.clientHeight;
-    var projectionMatrix = mat4.create();
-    mat4.perspectiveNO(projectionMatrix, 100, aspect, -1, 1);
+    // ── Camera (static for now) ──────────────────────────────────────────
+    // Sphere is unit-radius at the origin → sit the camera a few units back.
+    const cameraPosition: [number, number, number] = [0, 0, 3];
+    const target:         [number, number, number] = [0, 0, 0];
+    const up:             [number, number, number] = [0, 1, 0];
 
-    // camera matrix
-    var cameraPosition = [0,0,100];
-    var target = [0,0,0];
-    var up = [0,1,0];
-    var cameraMatrix = mat4.create();
+    const cameraMatrix = mat4.create();
     mat4.targetTo(cameraMatrix, cameraPosition, target, up);
-
-    // view matrix
-    var viewMatrix = mat4.create();
+    const viewMatrix = mat4.create();
     mat4.invert(viewMatrix, cameraMatrix);
 
-    var viewProjectionMatrix = mat4.create();
-    mat4.multiply(viewProjectionMatrix, projectionMatrix, viewMatrix);
+    // ── Load and prepare the sphere ──────────────────────────────────────
+    const model = await parseGLB("models/sphere.glb");
+    const prim  = model.meshes[0]?.primitives[0];
+    if (!prim) throw new Error("sphere.glb has no mesh primitives.");
+    const geo = expandIndexed(prim);
 
+    const sharedProgram3D = twgl.createProgramInfo(gl, [vertexShader3D, fragShader3D]);
+    const sphere = new RenderObject(gl, sharedProgram3D);
+    sphere.setAttributeData("a_position", { data: geo.positions, size: 3 });
+    if (geo.normals) {
+        sphere.setAttributeData("a_normal", { data: geo.normals, size: 3 });
+    }
+    sphere.setUniform("u_colorMult", [1, 1, 1, 1]);
+    sphere.setCount(geo.count);
+    sphere.uploadBuffers();
+    objects.push(sphere);
 
-
+    // ── Render loop ──────────────────────────────────────────────────────
     const loop = new RenderLoop(gl, canvas);
 
-    // Helper: push u_resolution to all objects. Called on init and on resize.
-    function updateResolution() {
-        const res: [number, number] = [gl!.canvas.width, gl!.canvas.height];
-        for (const obj of objects) {
-            obj.setUniform("u_resolution", res);
-        }
+    // Aspect-dependent uniforms (projection here) must be recomputed whenever
+    // the canvas resizes, or the model stretches with the window.
+    function updateProjection() {
+        const aspect         = gl!.canvas.width / gl!.canvas.height;
+        const projection     = mat4.create();
+        const viewProjection = mat4.create();
+        mat4.perspectiveNO(projection, Math.PI / 3, aspect, 0.1, 100);
+        mat4.multiply(viewProjection, projection, viewMatrix);
+        // Sphere's model matrix is identity, so final = viewProjection.
+        sphere.setUniform("u_matrix", viewProjection);
     }
+    updateProjection();
 
     loop.onBeforeFrame = (gl, canvas) => {
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -146,59 +209,24 @@ function main() {
         gl.clear(gl.COLOR_BUFFER_BIT | gl.DEPTH_BUFFER_BIT);
     };
 
-    //store this here so that we can check the resolution changes first and then ask for u_res changes
+    // Watch backing-store size so resize-driven matrix updates only fire
+    // when canvas dimensions actually change.
     let lastWidth  = canvas.width;
     let lastHeight = canvas.height;
-
     const originalOnBeforeFrame = loop.onBeforeFrame!;
     loop.onBeforeFrame = (gl, canvas, time) => {
         originalOnBeforeFrame(gl, canvas, time);
         if (canvas.width !== lastWidth || canvas.height !== lastHeight) {
             lastWidth  = canvas.width;
             lastHeight = canvas.height;
-            updateResolution();
+            updateProjection();
         }
     };
 
-    //share a program between common objects with the same rules
-    const sharedProgram = twgl.createProgramInfo(gl, [vertexShaderSource, fragmentShaderSource]);
-
-    for (let i = 0; i < 100; i++) {
-        let obj = new RenderObject(gl, sharedProgram);
-        obj.setAttributeData("a_position", {
-            data: setRectangle(gl, randomInt(canvas.width - 300), randomInt(canvas.height - 300), randomInt(300), randomInt(300)),
-            size: 2,
-            dynamic: true,
-        });
-        obj.setUniform("u_resolution", [gl.canvas.width, gl.canvas.height]);
-        obj.setUniform("u_color", [Math.random(), Math.random(), Math.random(), 1]);
-        obj.setCount(6);
-        obj.uploadBuffers(); // explicit pre-upload before first frame
-        objects.push(obj);
-        loop.add(obj);
-    }
-
-    //3d time
-
-    
-
+    loop.add(sphere);
 
     const input = new InputManager(canvas);
     loop.attachInput(input);
-
-    loop.onInput = (input, time) => {
-        if (input.isKeyPressed("KeyR")) {
-            for (const obj of objects) {
-                obj.setAttributeData("a_position", {
-                    data: setRectangle(gl, randomInt(canvas.width - 300), randomInt(canvas.height - 300), randomInt(300), randomInt(300)),
-                    size: 2,
-                    dynamic: true,
-                });
-                // No uploadBuffers() call needed — draw() handles it automatically.
-            }
-            return true;
-        }
-    };
 
     loop.start();
     loop.requestRedraw();
