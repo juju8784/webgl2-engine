@@ -213,34 +213,6 @@ async function main() {
     // ── Load and prepare miku ────────────────────────────────────────────
     const mikuModel = await parseGLB('models/hatsune_miku.glb');
 
-    // Diagnostic: dump everything the parser found so we can tell whether the
-    // model is a single mega-primitive, dozens of small ones, or something
-    // weirder. Also report position bounds — if miku is millimeter-scale or
-    // 1000-unit-scale she'll be invisible at our camera distance.
-    console.log("miku meshes:", mikuModel.meshes.length,
-                "materials:",   mikuModel.materials.length,
-                "textures:",    mikuModel.textures.length,
-                "images:",      mikuModel.images.length);
-    let totalVerts = 0, totalIdx = 0;
-    let minX = Infinity, minY = Infinity, minZ = Infinity;
-    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
-    for (let m = 0; m < mikuModel.meshes.length; m++) {
-        const mesh = mikuModel.meshes[m]!;
-        for (let p = 0; p < mesh.primitives.length; p++) {
-            const pr = mesh.primitives[p]!;
-            totalVerts += pr.vertexCount;
-            totalIdx   += pr.indexCount ?? 0;
-            for (let i = 0; i < pr.positions.length; i += 3) {
-                const x = pr.positions[i]!, y = pr.positions[i+1]!, z = pr.positions[i+2]!;
-                if (x < minX) minX = x; if (x > maxX) maxX = x;
-                if (y < minY) minY = y; if (y > maxY) maxY = y;
-                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
-            }
-            console.log(`  mesh[${m}].prim[${p}] verts=${pr.vertexCount} idx=${pr.indexCount ?? 0} uvs=${!!pr.uvs} matIdx=${pr.materialIndex}`);
-        }
-    }
-    console.log(`miku totals: verts=${totalVerts} idx=${totalIdx} bounds X[${minX.toFixed(2)},${maxX.toFixed(2)}] Y[${minY.toFixed(2)},${maxY.toFixed(2)}] Z[${minZ.toFixed(2)},${maxZ.toFixed(2)}]`);
-
     // Build one RenderObject per primitive; share the program across all of them.
     const sharedProgram3DTexture = twgl.createProgramInfo(gl, [vertexShader3DTexture, fragShader3DTexture]);
 
@@ -277,19 +249,9 @@ async function main() {
 
     for (const mesh of mikuModel.meshes) {
         for (const pr of mesh.primitives) {
-            if (!pr.uvs) {
-                console.warn("  skipping primitive without UVs");
-                continue;
-            }
-            if (pr.materialIndex === undefined) {
-                console.warn("  skipping primitive without material");
-                continue;
-            }
+            if (!pr.uvs || pr.materialIndex === undefined) continue;
             const tex = getTexture(pr.materialIndex);
-            if (!tex) {
-                console.warn(`  skipping primitive — material ${pr.materialIndex} has no baseColorTexture`);
-                continue;
-            }
+            if (!tex) continue;
 
             const obj = new RenderObject(gl, sharedProgram3DTexture);
             obj.setAttributeData("a_position", { data: pr.positions, size: 3 });
@@ -316,7 +278,6 @@ async function main() {
             objects.push(obj);
         }
     }
-    console.log(`miku: built ${mikuObjects.length} render objects.`);
 
     // ── Render loop ──────────────────────────────────────────────────────
     const loop = new RenderLoop(gl, canvas);
