@@ -1,9 +1,9 @@
-import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils";
+import { RenderObject, resizeCanvasToDisplaySize, createTexture } from "./resources/webgl-utils";
 import { RenderLoop } from "./resources/renderloop";
 import * as twgl from "twgl.js";
 import { InputManager } from "./resources/input-manager";
 import { mat4 } from "gl-matrix";
-import { parseGLB } from "./resources/glb-parser";
+import { parseGLB, DEFAULT_SAMPLER } from "./resources/glb-parser";
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const gl = canvas.getContext('webgl2');
@@ -68,6 +68,75 @@ var fragShader3D = `#version 300 es
     }
 `;
 
+var vertexShader3DTexture = `#version 300 es
+    uniform mat4 u_worldViewProjection;
+    uniform vec3 u_lightWorldPos;
+    uniform mat4 u_world;
+    uniform mat4 u_viewInverse;
+    uniform mat4 u_worldInverseTranspose;
+
+    in vec3 a_position;
+    in vec3 a_normal;
+    in vec2 a_texcoord;
+
+    out vec4 v_position;
+    out vec2 v_texCoord;
+    out vec3 v_normal;
+    out vec3 v_surfaceToLight;
+    out vec3 v_surfaceToView;
+
+    void main() {
+        v_texCoord = a_texcoord;
+        v_position = (u_worldViewProjection * vec4(a_position, 1.0));
+        v_normal = (u_worldInverseTranspose * vec4(a_normal, 0.0)).xyz;
+        v_surfaceToLight = u_lightWorldPos - (u_world * vec4(a_position, 1.0)).xyz;
+        v_surfaceToView = u_viewInverse[3].xyz - (u_world * vec4(a_position, 1.0)).xyz;
+        gl_Position = v_position;
+    }
+`;
+
+var fragShader3DTexture = `#version 300 es
+    precision highp float;
+    
+    in vec4 v_position;
+    in vec2 v_texCoord;
+    in vec3 v_normal;
+    in vec3 v_surfaceToLight;
+    in vec3 v_surfaceToView;
+    
+    uniform vec4 u_lightColor;
+    uniform vec4 u_ambient;
+    //potentially add a u_ambientLightColor
+    uniform sampler2D u_diffuse;
+    uniform vec4 u_specular;
+    uniform float u_shininess;
+    uniform float u_specularFactor;
+    
+    out vec4 outColor;
+    
+    vec4 lit(float l ,float h, float m) {
+    return vec4(1.0,
+                max(l, 0.0),
+                (l > 0.0) ? pow(max(0.0, h), m) : 0.0,
+                1.0);
+    }
+    
+    void main() {
+    vec4 diffuseColor = texture(u_diffuse, v_texCoord);
+    vec3 a_normal = normalize(v_normal);
+    vec3 surfaceToLight = normalize(v_surfaceToLight);
+    vec3 surfaceToView = normalize(v_surfaceToView);
+    vec3 halfVector = normalize(surfaceToLight + surfaceToView);
+    vec4 litR = lit(dot(a_normal, surfaceToLight),
+                        dot(a_normal, halfVector), u_shininess);
+    outColor = vec4((
+        u_lightColor * (diffuseColor * litR.y + diffuseColor * u_ambient +
+        u_specular * litR.z * u_specularFactor)).rgb,
+        diffuseColor.a);
+    }
+`;
+
+
 function setRectangle(gl: WebGL2RenderingContext, x: number, y: number, width: number, height: number) {
     var x1 = x;
     var x2 = x + width;
@@ -112,7 +181,7 @@ async function main() {
 
     // ── Camera (static for now) ──────────────────────────────────────────
     // Sphere is unit-radius at the origin → sit the camera a few units back.
-    const cameraPosition: [number, number, number] = [0, 0, 3];
+    const cameraPosition: [number, number, number] = [0, 0, 10];
     const target:         [number, number, number] = [0, 0, 0];
     const up:             [number, number, number] = [0, 1, 0];
 
@@ -141,21 +210,132 @@ async function main() {
     sphere.uploadBuffers();
     objects.push(sphere);
 
+    // ── Load and prepare miku ────────────────────────────────────────────
+    const mikuModel = await parseGLB('models/hatsune_miku.glb');
+
+    // Build one RenderObject per primitive; share the program across all of them.
+    const sharedProgram3DTexture = twgl.createProgramInfo(gl, [vertexShader3DTexture, fragShader3DTexture]);
+
+    // Cache GL textures by image index — multiple primitives often share one.
+    const textureCache = new Map<number, WebGLTexture>();
+    const getTexture = (matIndex: number): WebGLTexture | null => {
+        const m = mikuModel.materials[matIndex];
+        if (!m?.baseColorTexture) return null;
+        const t = mikuModel.textures[m.baseColorTexture.index]!;
+        let cached = textureCache.get(t.imageIndex);
+        if (cached) return cached;
+        const img = mikuModel.images[t.imageIndex]!;
+        const samp = t.samplerIndex !== undefined
+            ? mikuModel.samplers[t.samplerIndex]!
+            : DEFAULT_SAMPLER;
+        cached = createTexture(gl, img.bitmap, samp);
+        textureCache.set(t.imageIndex, cached);
+        return cached;
+    };
+
+    // Miku's model matrix. Source bounds: Y[0.02, 20.43], X[-7.08, 7.08],
+    // Z[-4.86, 2.20] — feet at origin, ~20 units tall. Scale 0.1 → 2 units tall,
+    // then translate down so she's vertically centered next to the sphere.
+    const mikuWorld = mat4.create();
+    mat4.translate(mikuWorld, mikuWorld, [2.0, -1, 0]);
+    mat4.scale(mikuWorld, mikuWorld, [0.1, 0.1, 0.1]);
+
+    const mikuWorldIT = mat4.create();
+    mat4.invert(mikuWorldIT, mikuWorld);
+    mat4.transpose(mikuWorldIT, mikuWorldIT);
+
+    // Track the per-primitive RenderObjects so updateProjection() can update them all.
+    const mikuObjects: RenderObject[] = [];
+
+    for (const mesh of mikuModel.meshes) {
+        for (const pr of mesh.primitives) {
+            if (!pr.uvs || pr.materialIndex === undefined) continue;
+            const tex = getTexture(pr.materialIndex);
+            if (!tex) continue;
+
+            const obj = new RenderObject(gl, sharedProgram3DTexture);
+            obj.setAttributeData("a_position", { data: pr.positions, size: 3 });
+            if (pr.normals) obj.setAttributeData("a_normal", { data: pr.normals, size: 3 });
+            obj.setAttributeData("a_texcoord", { data: pr.uvs, size: 2 });
+            if (pr.indices) obj.setIndices(pr.indices);
+            else            obj.setCount(pr.vertexCount);
+
+            obj.setUniforms({
+                u_diffuse:               tex,
+                u_lightWorldPos:         [2, 3, 4],
+                u_lightColor:            [1, 1, 1, 1],
+                u_ambient:               [0.2, 0.2, 0.2, 1],
+                u_specular:              [1, 1, 1, 1],
+                u_shininess:             50,
+                u_specularFactor:        1,
+                u_world:                 mikuWorld,
+                u_viewInverse:           cameraMatrix,
+                u_worldInverseTranspose: mikuWorldIT,
+            });
+
+            obj.uploadBuffers();
+            mikuObjects.push(obj);
+            objects.push(obj);
+        }
+    }
+
     // ── Render loop ──────────────────────────────────────────────────────
     const loop = new RenderLoop(gl, canvas);
 
-    // Aspect-dependent uniforms (projection here) must be recomputed whenever
-    // the canvas resizes, or the model stretches with the window.
+    // viewProjection is rebuilt on resize; everything per-frame multiplies into it.
+    const viewProjection = mat4.create();
     function updateProjection() {
-        const aspect         = gl!.canvas.width / gl!.canvas.height;
-        const projection     = mat4.create();
-        const viewProjection = mat4.create();
+        const aspect     = gl!.canvas.width / gl!.canvas.height;
+        const projection = mat4.create();
         mat4.perspectiveNO(projection, Math.PI / 3, aspect, 0.1, 100);
         mat4.multiply(viewProjection, projection, viewMatrix);
-        // Sphere's model matrix is identity, so final = viewProjection.
-        sphere.setUniform("u_matrix", viewProjection);
     }
     updateProjection();
+
+    // ── Per-frame rotation ───────────────────────────────────────────────
+    // Allocate matrices once and reuse them every frame to avoid GC churn.
+    const sphereWorld = mat4.create();
+    const sphereMVP   = mat4.create();
+    const mikuWorldF  = mat4.create();
+    const mikuMVP     = mat4.create();
+    const mikuWorldITF = mat4.create();
+    const SPHERE_RPS = 0.3; // radians per second
+    const MIKU_RPS   = 0.4;
+    let lastTime: number | null = null;
+    let sphereAngle = 0;
+    let mikuAngle   = 0;
+
+    loop.onInput = (_state, time) => {
+        const tSec = time / 1000;
+        const dt   = lastTime === null ? 0 : tSec - lastTime;
+        lastTime   = tSec;
+        sphereAngle += dt * SPHERE_RPS;
+        mikuAngle   += dt * MIKU_RPS;
+
+        // Sphere: world = rotateY(angle), centered at origin.
+        mat4.identity(sphereWorld);
+        mat4.rotateY(sphereWorld, sphereWorld, sphereAngle);
+        mat4.multiply(sphereMVP, viewProjection, sphereWorld);
+        sphere.setUniform("u_matrix", sphereMVP);
+
+        // Miku: world = translate * rotateY * scale.
+        // Order matters — apply scale first (innermost), then rotate her in
+        // place around her feet, then translate into world position.
+        mat4.identity(mikuWorldF);
+        mat4.translate(mikuWorldF, mikuWorldF, [2.0, -1, 0]);
+        mat4.rotateY(mikuWorldF, mikuWorldF, mikuAngle);
+        mat4.scale(mikuWorldF, mikuWorldF, [0.1, 0.1, 0.1]);
+        mat4.multiply(mikuMVP, viewProjection, mikuWorldF);
+        mat4.invert(mikuWorldITF, mikuWorldF);
+        mat4.transpose(mikuWorldITF, mikuWorldITF);
+        for (const obj of mikuObjects) {
+            obj.setUniform("u_world",                 mikuWorldF);
+            obj.setUniform("u_worldViewProjection",   mikuMVP);
+            obj.setUniform("u_worldInverseTranspose", mikuWorldITF);
+        }
+
+        return true; // continuous animation — redraw every frame
+    };
 
     loop.onBeforeFrame = (gl, canvas) => {
         gl.viewport(0, 0, canvas.width, canvas.height);
@@ -178,6 +358,7 @@ async function main() {
     };
 
     loop.add(sphere);
+    for (const obj of mikuObjects) loop.add(obj);
 
     const input = new InputManager(canvas);
     loop.attachInput(input);

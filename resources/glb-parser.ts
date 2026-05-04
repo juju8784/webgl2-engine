@@ -1,8 +1,9 @@
 /**
  * Minimal custom GLB (glTF 2.0 binary) parser.
  *
- * Extracts mesh primitives in a form ready to feed straight into
- * RenderObject.setAttributeData / setIndices:
+ * Extracts mesh primitives, materials, and textures in a form ready to feed
+ * straight into RenderObject.setAttributeData / setIndices and WebGL2 texture
+ * uploads:
  *
  *   const model = await parseGLB("models/sphere.glb");
  *   const prim  = model.meshes[0].primitives[0];
@@ -11,17 +12,34 @@
  *   if (prim.normals) obj.setAttributeData("a_normal", { data: prim.normals, size: 3 });
  *   if (prim.uvs)     obj.setAttributeData("a_uv",     { data: prim.uvs,     size: 2 });
  *
+ *   if (prim.materialIndex !== undefined) {
+ *       const mat = model.materials[prim.materialIndex];
+ *       if (mat.baseColorTexture !== undefined) {
+ *           const tex     = model.textures[mat.baseColorTexture.index];
+ *           const bitmap  = model.images[tex.imageIndex].bitmap;
+ *           const sampler = tex.samplerIndex !== undefined
+ *               ? model.samplers[tex.samplerIndex]
+ *               : DEFAULT_SAMPLER;
+ *           // gl.texImage2D(..., bitmap); gl.texParameteri(..., sampler.minFilter); etc.
+ *       }
+ *   }
+ *
  * Supports:
  *   - GLB version 2 with one BIN chunk (the common case).
  *   - POSITION / NORMAL / TEXCOORD_0 attributes.
  *   - Indexed and non-indexed primitives (UNSIGNED_SHORT / UNSIGNED_INT).
  *   - Interleaved bufferViews (de-interleaves into tight arrays).
+ *   - PBR baseColorTexture + baseColorFactor materials.
+ *   - PNG / JPEG images embedded in the BIN chunk, decoded to ImageBitmap.
+ *   - Samplers exposed as raw WebGL2 enums (filters + wrap modes).
  *
  * Out of scope (intentionally — keep it small for now):
- *   - External .bin/.gltf files (we only handle self-contained .glb).
+ *   - External .bin/.gltf files and data-URI images (we only handle self-contained .glb).
+ *   - Other PBR textures (metallicRoughness, normal, occlusion, emissive).
  *   - Tangents, colors, joints/weights, multiple UV sets.
- *   - Skins, animations, materials, textures, scene graph traversal.
+ *   - Skins, animations, scene graph traversal.
  *   - Sparse accessors and morph targets.
+ *   - Compressed textures (KTX2 / Basis / DDS).
  */
 
 // ─── glTF / GLB constants ────────────────────────────────────────────────────
@@ -67,14 +85,16 @@ type TypedArray =
  * otherwise draw with drawArrays(count = vertexCount).
  */
 export interface GLBPrimitive {
-    positions:    Float32Array;
-    normals?:     Float32Array;
-    uvs?:         Float32Array;
-    indices?:     Uint16Array | Uint32Array;
-    vertexCount:  number;
-    indexCount?:  number;
+    positions:      Float32Array;
+    normals?:       Float32Array;
+    uvs?:           Float32Array;
+    indices?:       Uint16Array | Uint32Array;
+    vertexCount:    number;
+    indexCount?:    number;
     /** GL primitive mode (default 4 = TRIANGLES, per glTF spec). */
-    mode:         number;
+    mode:           number;
+    /** Index into GLBModel.materials. Undefined → use default material. */
+    materialIndex?: number;
 }
 
 export interface GLBMesh {
@@ -82,10 +102,68 @@ export interface GLBMesh {
     primitives:  GLBPrimitive[];
 }
 
+/** Decoded image, ready to upload via gl.texImage2D(..., bitmap). */
+export interface GLBImage {
+    bitmap:    ImageBitmap;
+    mimeType:  string;
+    name?:     string;
+}
+
+/**
+ * WebGL2 sampler state. Values are the raw GL enum integers
+ * (which are also exactly what glTF stores in JSON).
+ */
+export interface GLBSampler {
+    /** TEXTURE_MAG_FILTER: 9728 NEAREST, 9729 LINEAR. */
+    magFilter: number;
+    /** TEXTURE_MIN_FILTER: 9728/9729/9984/9985/9986/9987. */
+    minFilter: number;
+    /** TEXTURE_WRAP_S: 10497 REPEAT, 33071 CLAMP_TO_EDGE, 33648 MIRRORED_REPEAT. */
+    wrapS:     number;
+    /** TEXTURE_WRAP_T. */
+    wrapT:     number;
+}
+
+/**
+ * Default sampler, applied when a glTF texture omits its sampler reference.
+ * Per the glTF 2.0 spec the wrap mode defaults are REPEAT and the filters are
+ * "implementation-defined" — LINEAR + LINEAR_MIPMAP_LINEAR is the standard pick.
+ */
+export const DEFAULT_SAMPLER: GLBSampler = {
+    magFilter: 9729,  // LINEAR
+    minFilter: 9987,  // LINEAR_MIPMAP_LINEAR
+    wrapS:     10497, // REPEAT
+    wrapT:     10497, // REPEAT
+};
+
+export interface GLBTexture {
+    imageIndex:    number;
+    /** Undefined → use DEFAULT_SAMPLER. */
+    samplerIndex?: number;
+}
+
+export interface GLBTextureRef {
+    /** Index into GLBModel.textures. */
+    index:    number;
+    /** Which UV set on the primitive feeds this texture (0 → uvs / TEXCOORD_0). */
+    texCoord: number;
+}
+
+export interface GLBMaterial {
+    name?:             string;
+    /** RGBA, linear, multiplied with the baseColorTexture sample (default [1,1,1,1]). */
+    baseColorFactor:   [number, number, number, number];
+    baseColorTexture?: GLBTextureRef;
+}
+
 export interface GLBModel {
-    meshes: GLBMesh[];
-    /** Raw glTF JSON, exposed for callers that need extras (materials, nodes, …). */
-    json:   any;
+    meshes:    GLBMesh[];
+    materials: GLBMaterial[];
+    textures:  GLBTexture[];
+    images:    GLBImage[];
+    samplers:  GLBSampler[];
+    /** Raw glTF JSON, exposed for callers that need extras (nodes, scenes, …). */
+    json:      any;
 }
 
 // ─── Public API ──────────────────────────────────────────────────────────────
@@ -107,26 +185,31 @@ export async function parseGLB(url: string): Promise<GLBModel> {
 /**
  * Parse an already-loaded .glb byte buffer.
  * Use this when bytes are obtained outside of fetch (drag-drop, FileReader, etc.).
+ *
+ * Async because image decoding via createImageBitmap is async.
  */
-export function parseGLBBuffer(buffer: ArrayBuffer): GLBModel {
+export async function parseGLBBuffer(buffer: ArrayBuffer): Promise<GLBModel> {
     const { json, bin } = readGLBChunks(buffer);
     if (!bin) {
         throw new Error("parseGLB: file has no BIN chunk (external .bin not supported).");
     }
 
-    const meshes: GLBMesh[] = [];
+    // Decode images first — primitives/materials/textures are all sync to build.
+    const images   = await readImages(json, bin);
+    const samplers = readSamplers(json);
+    const textures = readTextures(json);
+    const materials = readMaterials(json);
 
+    const meshes: GLBMesh[] = [];
     for (const meshDef of json.meshes ?? []) {
         const primitives: GLBPrimitive[] = [];
-
         for (const primDef of meshDef.primitives ?? []) {
             primitives.push(readPrimitive(json, bin, primDef));
         }
-
         meshes.push({ name: meshDef.name, primitives });
     }
 
-    return { meshes, json };
+    return { meshes, materials, textures, images, samplers, json };
 }
 
 // ─── Internal: chunk splitter ────────────────────────────────────────────────
@@ -229,7 +312,101 @@ function readPrimitive(json: any, bin: ArrayBuffer, primDef: any): GLBPrimitive 
         prim.indices    = indices;
         prim.indexCount = indices.length;
     }
+    if (primDef.material !== undefined) {
+        prim.materialIndex = primDef.material;
+    }
     return prim;
+}
+
+// ─── Internal: images ────────────────────────────────────────────────────────
+
+/**
+ * Decode every glTF image into an ImageBitmap. We only support images stored
+ * in a bufferView (the GLB-embedded case); `image.uri` (external file or data
+ * URI) throws — by design for now.
+ */
+async function readImages(json: any, bin: ArrayBuffer): Promise<GLBImage[]> {
+    const defs: any[] = json.images ?? [];
+    if (defs.length === 0) return [];
+
+    return Promise.all(defs.map(async (def, i): Promise<GLBImage> => {
+        if (def.uri !== undefined) {
+            throw new Error(`parseGLB: image ${i} uses uri (external/data-URI images not supported).`);
+        }
+        if (def.bufferView === undefined) {
+            throw new Error(`parseGLB: image ${i} has neither uri nor bufferView.`);
+        }
+
+        const bv = json.bufferViews?.[def.bufferView];
+        if (!bv) throw new Error(`parseGLB: image ${i} references missing bufferView ${def.bufferView}.`);
+        if ((bv.buffer ?? 0) !== 0) {
+            throw new Error(`parseGLB: image ${i} references buffer ${bv.buffer} (only buffer 0 is supported).`);
+        }
+
+        const mimeType = def.mimeType ?? sniffImageMime(bin, bv.byteOffset ?? 0);
+        if (mimeType !== "image/png" && mimeType !== "image/jpeg") {
+            throw new Error(`parseGLB: image ${i} has unsupported mime type "${mimeType}" (only PNG/JPEG).`);
+        }
+
+        const bytes  = new Uint8Array(bin, bv.byteOffset ?? 0, bv.byteLength);
+        const blob   = new Blob([bytes], { type: mimeType });
+        const bitmap = await createImageBitmap(blob);
+
+        const out: GLBImage = { bitmap, mimeType };
+        if (def.name !== undefined) out.name = def.name;
+        return out;
+    }));
+}
+
+/** Sniff PNG/JPEG by magic bytes when image.mimeType is omitted. */
+function sniffImageMime(bin: ArrayBuffer, offset: number): string {
+    const v = new DataView(bin, offset);
+    // PNG: 89 50 4E 47
+    if (v.getUint32(0, false) === 0x89504e47) return "image/png";
+    // JPEG: FF D8 FF
+    if ((v.getUint32(0, false) >>> 8) === 0xffd8ff) return "image/jpeg";
+    return "application/octet-stream";
+}
+
+// ─── Internal: samplers / textures / materials ───────────────────────────────
+
+function readSamplers(json: any): GLBSampler[] {
+    return (json.samplers ?? []).map((s: any): GLBSampler => ({
+        magFilter: s.magFilter ?? DEFAULT_SAMPLER.magFilter,
+        minFilter: s.minFilter ?? DEFAULT_SAMPLER.minFilter,
+        wrapS:     s.wrapS     ?? DEFAULT_SAMPLER.wrapS,
+        wrapT:     s.wrapT     ?? DEFAULT_SAMPLER.wrapT,
+    }));
+}
+
+function readTextures(json: any): GLBTexture[] {
+    return (json.textures ?? []).map((t: any, i: number): GLBTexture => {
+        if (t.source === undefined) {
+            throw new Error(`parseGLB: texture ${i} has no source image.`);
+        }
+        const out: GLBTexture = { imageIndex: t.source };
+        if (t.sampler !== undefined) out.samplerIndex = t.sampler;
+        return out;
+    });
+}
+
+function readMaterials(json: any): GLBMaterial[] {
+    return (json.materials ?? []).map((m: any): GLBMaterial => {
+        const pbr = m.pbrMetallicRoughness ?? {};
+        const factor = pbr.baseColorFactor ?? [1, 1, 1, 1];
+
+        const mat: GLBMaterial = {
+            baseColorFactor: [factor[0], factor[1], factor[2], factor[3]],
+        };
+        if (m.name !== undefined) mat.name = m.name;
+        if (pbr.baseColorTexture) {
+            mat.baseColorTexture = {
+                index:    pbr.baseColorTexture.index,
+                texCoord: pbr.baseColorTexture.texCoord ?? 0,
+            };
+        }
+        return mat;
+    });
 }
 
 // ─── Internal: accessor → tight typed array ──────────────────────────────────

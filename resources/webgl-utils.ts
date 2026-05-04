@@ -49,6 +49,68 @@ export function createProgramFromSources(
     return createProgram(gl, vs, fs);
 }
 
+// ─── Texture Helper ──────────────────────────────────────────────────────────
+
+/**
+ * Optional sampler/upload parameters for createTexture().
+ * Field names and value ranges match the WebGL2 enum integers
+ * (which are also exactly what glTF stores), so a GLBSampler can be passed
+ * directly without conversion.
+ */
+export interface TextureParams {
+    /** TEXTURE_MAG_FILTER. Default: LINEAR (9729). */
+    magFilter?:      number;
+    /** TEXTURE_MIN_FILTER. Default: LINEAR_MIPMAP_LINEAR (9987). */
+    minFilter?:      number;
+    /** TEXTURE_WRAP_S. Default: REPEAT (10497). */
+    wrapS?:          number;
+    /** TEXTURE_WRAP_T. Default: REPEAT (10497). */
+    wrapT?:          number;
+    /** UNPACK_FLIP_Y_WEBGL. Default: false (matches glTF top-left origin). */
+    flipY?:          boolean;
+    /** Whether to call gl.generateMipmap after upload. Default: true. */
+    generateMipmap?: boolean;
+}
+
+/**
+ * Upload an image source as a WebGL2 RGBA texture and apply sampler state.
+ *
+ * `source` is anything texImage2D accepts — ImageBitmap, HTMLImageElement,
+ * HTMLCanvasElement, ImageData, etc.
+ *
+ * The defaults assume "I want a normal trilinear-filtered, repeating texture
+ * with mipmaps", which is the right answer ~95% of the time. Override any
+ * field via `params` (e.g. pass a GLBSampler straight through).
+ */
+export function createTexture(
+    gl: WebGL2RenderingContext,
+    source: TexImageSource,
+    params: TextureParams = {},
+): WebGLTexture {
+    const tex = gl.createTexture();
+    if (!tex) throw new Error("createTexture: gl.createTexture() returned null.");
+
+    const magFilter      = params.magFilter      ?? 9729;  // LINEAR
+    const minFilter      = params.minFilter      ?? 9987;  // LINEAR_MIPMAP_LINEAR
+    const wrapS          = params.wrapS          ?? 10497; // REPEAT
+    const wrapT          = params.wrapT          ?? 10497; // REPEAT
+    const flipY          = params.flipY          ?? false;
+    const generateMipmap = params.generateMipmap ?? true;
+
+    gl.bindTexture(gl.TEXTURE_2D, tex);
+    gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, flipY);
+    gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, gl.RGBA, gl.UNSIGNED_BYTE, source);
+    if (generateMipmap) gl.generateMipmap(gl.TEXTURE_2D);
+
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, magFilter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, minFilter);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S,     wrapS);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T,     wrapT);
+
+    gl.bindTexture(gl.TEXTURE_2D, null);
+    return tex;
+}
+
 /** Resizes the canvas backing store to match its CSS display size (DPI-aware). */
 export function resizeCanvasToDisplaySize(canvas: HTMLCanvasElement): boolean {
     const displayWidth  = canvas.clientWidth  * window.devicePixelRatio;
