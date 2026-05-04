@@ -321,23 +321,60 @@ async function main() {
     // ── Render loop ──────────────────────────────────────────────────────
     const loop = new RenderLoop(gl, canvas);
 
-    // Aspect-dependent uniforms (projection here) must be recomputed whenever
-    // the canvas resizes, or the model stretches with the window.
+    // viewProjection is rebuilt on resize; everything per-frame multiplies into it.
+    const viewProjection = mat4.create();
     function updateProjection() {
-        const aspect         = gl!.canvas.width / gl!.canvas.height;
-        const projection     = mat4.create();
-        const viewProjection = mat4.create();
+        const aspect     = gl!.canvas.width / gl!.canvas.height;
+        const projection = mat4.create();
         mat4.perspectiveNO(projection, Math.PI / 3, aspect, 0.1, 100);
         mat4.multiply(viewProjection, projection, viewMatrix);
-        // Sphere's model matrix is identity, so final = viewProjection.
-        sphere.setUniform("u_matrix", viewProjection);
-
-        // Miku's MVP = viewProjection * world. Same value across every primitive.
-        const mikuMVP = mat4.create();
-        mat4.multiply(mikuMVP, viewProjection, mikuWorld);
-        for (const obj of mikuObjects) obj.setUniform("u_worldViewProjection", mikuMVP);
     }
     updateProjection();
+
+    // ── Per-frame rotation ───────────────────────────────────────────────
+    // Allocate matrices once and reuse them every frame to avoid GC churn.
+    const sphereWorld = mat4.create();
+    const sphereMVP   = mat4.create();
+    const mikuWorldF  = mat4.create();
+    const mikuMVP     = mat4.create();
+    const mikuWorldITF = mat4.create();
+    const SPHERE_RPS = 0.3; // radians per second
+    const MIKU_RPS   = 0.4;
+    let lastTime: number | null = null;
+    let sphereAngle = 0;
+    let mikuAngle   = 0;
+
+    loop.onInput = (_state, time) => {
+        const tSec = time / 1000;
+        const dt   = lastTime === null ? 0 : tSec - lastTime;
+        lastTime   = tSec;
+        sphereAngle += dt * SPHERE_RPS;
+        mikuAngle   += dt * MIKU_RPS;
+
+        // Sphere: world = rotateY(angle), centered at origin.
+        mat4.identity(sphereWorld);
+        mat4.rotateY(sphereWorld, sphereWorld, sphereAngle);
+        mat4.multiply(sphereMVP, viewProjection, sphereWorld);
+        sphere.setUniform("u_matrix", sphereMVP);
+
+        // Miku: world = translate * rotateY * scale.
+        // Order matters — apply scale first (innermost), then rotate her in
+        // place around her feet, then translate into world position.
+        mat4.identity(mikuWorldF);
+        mat4.translate(mikuWorldF, mikuWorldF, [2.0, -1, 0]);
+        mat4.rotateY(mikuWorldF, mikuWorldF, mikuAngle);
+        mat4.scale(mikuWorldF, mikuWorldF, [0.1, 0.1, 0.1]);
+        mat4.multiply(mikuMVP, viewProjection, mikuWorldF);
+        mat4.invert(mikuWorldITF, mikuWorldF);
+        mat4.transpose(mikuWorldITF, mikuWorldITF);
+        for (const obj of mikuObjects) {
+            obj.setUniform("u_world",                 mikuWorldF);
+            obj.setUniform("u_worldViewProjection",   mikuMVP);
+            obj.setUniform("u_worldInverseTranspose", mikuWorldITF);
+        }
+
+        return true; // continuous animation — redraw every frame
+    };
 
     loop.onBeforeFrame = (gl, canvas) => {
         gl.viewport(0, 0, canvas.width, canvas.height);
