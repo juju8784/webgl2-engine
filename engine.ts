@@ -1,9 +1,9 @@
-import { RenderObject, resizeCanvasToDisplaySize } from "./resources/webgl-utils";
+import { RenderObject, resizeCanvasToDisplaySize, createTexture } from "./resources/webgl-utils";
 import { RenderLoop } from "./resources/renderloop";
 import * as twgl from "twgl.js";
 import { InputManager } from "./resources/input-manager";
 import { mat4 } from "gl-matrix";
-import { parseGLB } from "./resources/glb-parser";
+import { parseGLB, DEFAULT_SAMPLER } from "./resources/glb-parser";
 
 const canvas = document.getElementById('c') as HTMLCanvasElement;
 const gl = canvas.getContext('webgl2');
@@ -80,13 +80,13 @@ var vertexShader3DTexture = `#version 300 es
     in vec2 a_texcoord;
 
     out vec4 v_position;
-    out vec2 v_texcoord;
+    out vec2 v_texCoord;
     out vec3 v_normal;
     out vec3 v_surfaceToLight;
     out vec3 v_surfaceToView;
 
     void main() {
-        v_texcoord = a_texcoord;
+        v_texCoord = a_texcoord;
         v_position = (u_worldViewProjection * vec4(a_position, 1.0));
         v_normal = (u_worldInverseTranspose * vec4(a_normal, 0.0)).xyz;
         v_surfaceToLight = u_lightWorldPos - (u_world * vec4(a_position, 1.0)).xyz;
@@ -181,7 +181,7 @@ async function main() {
 
     // ── Camera (static for now) ──────────────────────────────────────────
     // Sphere is unit-radius at the origin → sit the camera a few units back.
-    const cameraPosition: [number, number, number] = [0, 0, 3];
+    const cameraPosition: [number, number, number] = [0, 0, 10];
     const target:         [number, number, number] = [0, 0, 0];
     const up:             [number, number, number] = [0, 1, 0];
 
@@ -210,6 +210,114 @@ async function main() {
     sphere.uploadBuffers();
     objects.push(sphere);
 
+    // ── Load and prepare miku ────────────────────────────────────────────
+    const mikuModel = await parseGLB('models/hatsune_miku.glb');
+
+    // Diagnostic: dump everything the parser found so we can tell whether the
+    // model is a single mega-primitive, dozens of small ones, or something
+    // weirder. Also report position bounds — if miku is millimeter-scale or
+    // 1000-unit-scale she'll be invisible at our camera distance.
+    console.log("miku meshes:", mikuModel.meshes.length,
+                "materials:",   mikuModel.materials.length,
+                "textures:",    mikuModel.textures.length,
+                "images:",      mikuModel.images.length);
+    let totalVerts = 0, totalIdx = 0;
+    let minX = Infinity, minY = Infinity, minZ = Infinity;
+    let maxX = -Infinity, maxY = -Infinity, maxZ = -Infinity;
+    for (let m = 0; m < mikuModel.meshes.length; m++) {
+        const mesh = mikuModel.meshes[m]!;
+        for (let p = 0; p < mesh.primitives.length; p++) {
+            const pr = mesh.primitives[p]!;
+            totalVerts += pr.vertexCount;
+            totalIdx   += pr.indexCount ?? 0;
+            for (let i = 0; i < pr.positions.length; i += 3) {
+                const x = pr.positions[i]!, y = pr.positions[i+1]!, z = pr.positions[i+2]!;
+                if (x < minX) minX = x; if (x > maxX) maxX = x;
+                if (y < minY) minY = y; if (y > maxY) maxY = y;
+                if (z < minZ) minZ = z; if (z > maxZ) maxZ = z;
+            }
+            console.log(`  mesh[${m}].prim[${p}] verts=${pr.vertexCount} idx=${pr.indexCount ?? 0} uvs=${!!pr.uvs} matIdx=${pr.materialIndex}`);
+        }
+    }
+    console.log(`miku totals: verts=${totalVerts} idx=${totalIdx} bounds X[${minX.toFixed(2)},${maxX.toFixed(2)}] Y[${minY.toFixed(2)},${maxY.toFixed(2)}] Z[${minZ.toFixed(2)},${maxZ.toFixed(2)}]`);
+
+    // Build one RenderObject per primitive; share the program across all of them.
+    const sharedProgram3DTexture = twgl.createProgramInfo(gl, [vertexShader3DTexture, fragShader3DTexture]);
+
+    // Cache GL textures by image index — multiple primitives often share one.
+    const textureCache = new Map<number, WebGLTexture>();
+    const getTexture = (matIndex: number): WebGLTexture | null => {
+        const m = mikuModel.materials[matIndex];
+        if (!m?.baseColorTexture) return null;
+        const t = mikuModel.textures[m.baseColorTexture.index]!;
+        let cached = textureCache.get(t.imageIndex);
+        if (cached) return cached;
+        const img = mikuModel.images[t.imageIndex]!;
+        const samp = t.samplerIndex !== undefined
+            ? mikuModel.samplers[t.samplerIndex]!
+            : DEFAULT_SAMPLER;
+        cached = createTexture(gl, img.bitmap, samp);
+        textureCache.set(t.imageIndex, cached);
+        return cached;
+    };
+
+    // Miku's model matrix. Source bounds: Y[0.02, 20.43], X[-7.08, 7.08],
+    // Z[-4.86, 2.20] — feet at origin, ~20 units tall. Scale 0.1 → 2 units tall,
+    // then translate down so she's vertically centered next to the sphere.
+    const mikuWorld = mat4.create();
+    mat4.translate(mikuWorld, mikuWorld, [2.0, -1, 0]);
+    mat4.scale(mikuWorld, mikuWorld, [0.1, 0.1, 0.1]);
+
+    const mikuWorldIT = mat4.create();
+    mat4.invert(mikuWorldIT, mikuWorld);
+    mat4.transpose(mikuWorldIT, mikuWorldIT);
+
+    // Track the per-primitive RenderObjects so updateProjection() can update them all.
+    const mikuObjects: RenderObject[] = [];
+
+    for (const mesh of mikuModel.meshes) {
+        for (const pr of mesh.primitives) {
+            if (!pr.uvs) {
+                console.warn("  skipping primitive without UVs");
+                continue;
+            }
+            if (pr.materialIndex === undefined) {
+                console.warn("  skipping primitive without material");
+                continue;
+            }
+            const tex = getTexture(pr.materialIndex);
+            if (!tex) {
+                console.warn(`  skipping primitive — material ${pr.materialIndex} has no baseColorTexture`);
+                continue;
+            }
+
+            const obj = new RenderObject(gl, sharedProgram3DTexture);
+            obj.setAttributeData("a_position", { data: pr.positions, size: 3 });
+            if (pr.normals) obj.setAttributeData("a_normal", { data: pr.normals, size: 3 });
+            obj.setAttributeData("a_texcoord", { data: pr.uvs, size: 2 });
+            if (pr.indices) obj.setIndices(pr.indices);
+            else            obj.setCount(pr.vertexCount);
+
+            obj.setUniforms({
+                u_diffuse:               tex,
+                u_lightWorldPos:         [2, 3, 4],
+                u_lightColor:            [1, 1, 1, 1],
+                u_ambient:               [0.2, 0.2, 0.2, 1],
+                u_specular:              [1, 1, 1, 1],
+                u_shininess:             50,
+                u_specularFactor:        1,
+                u_world:                 mikuWorld,
+                u_viewInverse:           cameraMatrix,
+                u_worldInverseTranspose: mikuWorldIT,
+            });
+
+            obj.uploadBuffers();
+            mikuObjects.push(obj);
+            objects.push(obj);
+        }
+    }
+    console.log(`miku: built ${mikuObjects.length} render objects.`);
+
     // ── Render loop ──────────────────────────────────────────────────────
     const loop = new RenderLoop(gl, canvas);
 
@@ -223,6 +331,11 @@ async function main() {
         mat4.multiply(viewProjection, projection, viewMatrix);
         // Sphere's model matrix is identity, so final = viewProjection.
         sphere.setUniform("u_matrix", viewProjection);
+
+        // Miku's MVP = viewProjection * world. Same value across every primitive.
+        const mikuMVP = mat4.create();
+        mat4.multiply(mikuMVP, viewProjection, mikuWorld);
+        for (const obj of mikuObjects) obj.setUniform("u_worldViewProjection", mikuMVP);
     }
     updateProjection();
 
@@ -247,6 +360,7 @@ async function main() {
     };
 
     loop.add(sphere);
+    for (const obj of mikuObjects) loop.add(obj);
 
     const input = new InputManager(canvas);
     loop.attachInput(input);
